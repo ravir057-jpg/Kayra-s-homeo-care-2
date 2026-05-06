@@ -1,0 +1,112 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isDoctor() {
+      // Short-circuiting check to avoid calling get() on non-existent profile
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'doctor';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Collections ---
+
+    // Connectivity Test
+    match /_health/{docId} {
+      allow read: if true;
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn(); // Allow self-profile creation
+      allow update: if isOwner(userId) || isDoctor();
+    }
+    
+    // Symptom Logs
+    match /symptom_logs/{logId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.patientUid == request.auth.uid || isDoctor());
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.patientUid == request.auth.uid;
+    }
+
+    // Patient Records
+    match /patients/{patientId} {
+      allow read: if isDoctor() || (isSignedIn() && (resource == null || resource.data.uid == request.auth.uid || resource.data.email == request.auth.token.email));
+      allow create: if true; // Open registration
+      allow update: if isDoctor() || (isSignedIn() && exists(/databases/$(database)/documents/patients/$(patientId)) && get(/databases/$(database)/documents/patients/$(patientId)).data.uid == request.auth.uid);
+    }
+
+    // Appointments
+    match /appointments/{apptId} {
+      allow get, list: if isSignedIn() && (isDoctor() || resource.data.patientId == request.auth.uid || resource.data.patientUid == request.auth.uid || resource.data.doctorId == request.auth.uid);
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (isDoctor() || resource.data.patientId == request.auth.uid || resource.data.patientUid == request.auth.uid);
+    }
+
+    // Prescriptions
+    match /prescriptions/{rxId} {
+      allow get, list: if isSignedIn() && (isDoctor() || resource.data.patientId == request.auth.uid || resource.data.patientUid == request.auth.uid);
+      allow create: if isDoctor();
+      allow update: if isDoctor() && resource.data.doctorId == request.auth.uid;
+    }
+
+    // Invoices
+    match /invoices/{invId} {
+      allow get, list: if isSignedIn() && (isDoctor() || resource.data.patientId == request.auth.uid);
+      allow create: if isDoctor();
+      allow update: if isDoctor(); // For status updates
+    }
+
+    // Pharmacy / Inventory
+    match /inventory/{itemId} {
+      allow get, list: if isSignedIn(); // Allow checking stock
+      allow write: if isDoctor();
+    }
+
+    // Feedbacks & Ratings
+    match /feedbacks/{fbId} {
+      allow get, list: if true; // Public viewable
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && resource.data.patientId == request.auth.uid;
+    }
+
+    // Grievances / Complaints
+    match /complaints/{complaintId} {
+      allow create: if isSignedIn();
+      allow get, list: if isDoctor();
+    }
+
+    // Security & Access Audit Logs
+    match /audit_logs/{logId} {
+      allow create: if isSignedIn();
+      allow get, list: if isDoctor();
+    }
+
+    // Global Safety Net (Moved to bottom)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

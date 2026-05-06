@@ -1,0 +1,124 @@
+{
+  "entities": {
+    "users": {
+      "title": "User Profile",
+      "description": "System user profiles for doctors and staff",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["doctor"] },
+        "name": { "type": "string" },
+        "clinicName": { "type": "string" }
+      },
+      "required": ["uid", "role"]
+    },
+    "patients": {
+      "title": "Patient Profile",
+      "description": "HIPAA-compliant patient records",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["patient"] }
+      },
+      "required": ["name"]
+    },
+    "appointments": {
+      "title": "Clinical Appointment",
+      "description": "Patient-Doctor consultation slots",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string" },
+        "doctorId": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "cancelled"] }
+      }
+    },
+    "prescriptions": {
+      "title": "Medical Prescription",
+      "description": "Digital health records",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string" },
+        "doctorId": { "type": "string" },
+        "diagnosis": { "type": "string" }
+      }
+    },
+    "invoices": {
+      "title": "Billing Invoice",
+      "description": "Financial transaction records",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string" },
+        "doctorId": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string" }
+      }
+    },
+    "inventory": {
+      "title": "Pharmacy Inventory",
+      "description": "Medicine stock management",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "stockLevel": { "type": "number" }
+      }
+    },
+    "feedbacks": {
+      "title": "Patient Feedback",
+      "description": "Consultation reviews",
+      "type": "object",
+      "properties": {
+        "doctorId": { "type": "string" },
+        "patientId": { "type": "string" },
+        "rating": { "type": "number" }
+      }
+    },
+    "audit_logs": {
+      "title": "Security Log",
+      "description": "Immutable audit trails",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "users",
+      "description": "Doctor profiles"
+    },
+    "/patients/{patientId}": {
+      "schema": "patients",
+      "description": "Patient records"
+    },
+    "/appointments/{apptId}": {
+      "schema": "appointments",
+      "description": "Appointment slots"
+    },
+    "/prescriptions/{rxId}": {
+      "schema": "prescriptions",
+      "description": "Digital prescriptions"
+    },
+    "/invoices/{invoiceId}": {
+      "schema": "invoices",
+      "description": "Billing records"
+    },
+    "/inventory/{itemId}": {
+      "schema": "inventory",
+      "description": "Medicine stock"
+    },
+    "/feedbacks/{fbId}": {
+      "schema": "feedbacks",
+      "description": "Doctor reviews"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "audit_logs",
+      "description": "Security audit trail"
+    }
+  }
+}
