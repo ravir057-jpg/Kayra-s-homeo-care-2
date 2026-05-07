@@ -1,5 +1,5 @@
 import { collection, query, where, getDocs, orderBy, limit, Timestamp } from 'firebase/firestore';
-import { db } from '../lib/db';
+import { db, OperationType, handleFirestoreError } from '../lib/db';
 import { Appointment, Prescription, Invoice } from '../types';
 
 export interface DashboardStats {
@@ -20,8 +20,15 @@ export async function getDashboardStats(doctorId: string): Promise<DashboardStat
   
   try {
     // 1. Get Invoices for Revenue
-    const invoiceQ = query(collection(db, 'invoices'), where('doctorId', '==', doctorId));
-    const invoiceSnap = await getDocs(invoiceQ);
+    const invoicePath = 'invoices';
+    const invoiceQ = query(collection(db, invoicePath), where('doctorId', '==', doctorId));
+    let invoiceSnap;
+    try {
+      invoiceSnap = await getDocs(invoiceQ);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, invoicePath);
+      throw e;
+    }
     const invoices = invoiceSnap.docs.map(doc => doc.data() as Invoice);
     
     const currentMonthRevenue = invoices
@@ -38,8 +45,15 @@ export async function getDashboardStats(doctorId: string): Promise<DashboardStat
     const revenueChange = lastMonthRevenue === 0 ? 100 : ((currentMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100;
 
     // 2. Get Appointments
-    const apptQ = query(collection(db, 'appointments'), where('doctorId', '==', doctorId));
-    const apptSnap = await getDocs(apptQ);
+    const apptPath = 'appointments';
+    const apptQ = query(collection(db, apptPath), where('doctorId', '==', doctorId));
+    let apptSnap;
+    try {
+      apptSnap = await getDocs(apptQ);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, apptPath);
+      throw e;
+    }
     const appointments = apptSnap.docs.map(doc => doc.data() as Appointment);
     
     const currentMonthAppts = appointments.filter(a => new Date(a.date) >= startOfMonth).length;
@@ -55,8 +69,15 @@ export async function getDashboardStats(doctorId: string): Promise<DashboardStat
     // For change, we would need to track enrollment date, assuming 10% for now or 0 if no data
     
     // 4. Get Rating
-    const feedbackQ = query(collection(db, 'feedbacks'), where('doctorId', '==', doctorId));
-    const feedbackSnap = await getDocs(feedbackQ);
+    const feedbackPath = 'feedbacks';
+    const feedbackQ = query(collection(db, feedbackPath), where('doctorId', '==', doctorId));
+    let feedbackSnap;
+    try {
+      feedbackSnap = await getDocs(feedbackQ);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, feedbackPath);
+      throw e;
+    }
     const feedbacks = feedbackSnap.docs.map(doc => doc.data());
     const rating = feedbacks.length > 0 ? feedbacks.reduce((sum, f) => sum + f.rating, 0) / feedbacks.length : 0;
 
@@ -71,7 +92,7 @@ export async function getDashboardStats(doctorId: string): Promise<DashboardStat
       reviewCount: feedbacks.length
     };
   } catch (error) {
-    console.error("Analytics Error:", error);
+    console.error("Analytics Error (Handled):", error);
     return {
       revenue: 0,
       revenueChange: 0,
@@ -90,8 +111,15 @@ export async function getRevenueChartData(doctorId: string) {
   const data = months.map(name => ({ name, revenue: 0, patients: 0 }));
   
   try {
-    const invoiceQ = query(collection(db, 'invoices'), where('doctorId', '==', doctorId));
-    const invoiceSnap = await getDocs(invoiceQ);
+    const invoicePath = 'invoices';
+    const invoiceQ = query(collection(db, invoicePath), where('doctorId', '==', doctorId));
+    let invoiceSnap;
+    try {
+      invoiceSnap = await getDocs(invoiceQ);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, invoicePath);
+      throw e;
+    }
     
     invoiceSnap.docs.forEach(doc => {
       const inv = doc.data() as Invoice;
@@ -100,8 +128,15 @@ export async function getRevenueChartData(doctorId: string) {
       data[monthIdx].revenue += inv.amount;
     });
 
-    const apptQ = query(collection(db, 'appointments'), where('doctorId', '==', doctorId));
-    const apptSnap = await getDocs(apptQ);
+    const apptPath = 'appointments';
+    const apptQ = query(collection(db, apptPath), where('doctorId', '==', doctorId));
+    let apptSnap;
+    try {
+      apptSnap = await getDocs(apptQ);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, apptPath);
+      throw e;
+    }
     
     apptSnap.docs.forEach(doc => {
       const appt = doc.data() as Appointment;

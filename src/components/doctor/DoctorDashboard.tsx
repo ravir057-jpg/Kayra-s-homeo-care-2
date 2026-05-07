@@ -26,7 +26,7 @@ import {
   Bar
 } from 'recharts';
 import { collection, query, getDocs, limit, orderBy, where } from 'firebase/firestore';
-import { db, auth } from '../../lib/db';
+import { db, auth, OperationType, handleFirestoreError } from '../../lib/db';
 import { format } from 'date-fns';
 import { Feedback } from '../../types';
 import { getDashboardStats, getRevenueChartData } from '../../services/analyticsService';
@@ -76,12 +76,19 @@ export default function DoctorDashboard() {
         ]);
 
         // Get low stock count
-        const stockSnap = await getDocs(collection(db, 'inventory'));
-        const lowStock = stockSnap.docs.filter(d => d.data().stockLevel < 5).length;
+        let lowStockCount = 0;
+        const stockPath = 'inventory';
+        try {
+          const stockSnap = await getDocs(collection(db, stockPath));
+          lowStockCount = stockSnap.docs.filter(d => d.data().stockLevel < 5).length;
+        } catch (e) {
+          console.warn("Inventory fetch failed (likely no inventory yet):", e);
+          // Don't throw, just use 0 as default
+        }
 
         setStats({
           ...dashboardStats,
-          lowStock
+          lowStock: lowStockCount
         });
         setChartData(revenueData);
 

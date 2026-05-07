@@ -167,7 +167,7 @@ export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyze
                   </h4>
                   <div className="px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
                     <Sparkles size={12} className="animate-pulse" />
-                    Powered by Gemini 1.5
+                    Powered by Gemini 3
                   </div>
                 </div>
 

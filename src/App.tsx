@@ -49,7 +49,10 @@ import VideoConsultation from './components/doctor/VideoConsultation';
 import FollowUpManager from './components/doctor/FollowUpManager';
 import ReportsAnalytics from './components/doctor/ReportsAnalytics';
 import DoctorSettings from './components/doctor/DoctorSettings';
-import PatientPortal from './components/doctor/PatientPortal';
+import PatientPortal from './components/patient/PatientPortal';
+import PatientSplashScreen from './components/patient/PatientSplashScreen';
+import PatientOTPLogin from './components/patient/PatientOTPLogin';
+import PatientProfileSetup from './components/patient/PatientProfileSetup';
 import DoctorManager from './components/doctor/DoctorManager';
 import ComplaintsManager from './components/doctor/ComplaintsManager';
 import AuditLogs from './components/doctor/AuditLogs';
@@ -215,6 +218,9 @@ function AppContent() {
           <Route path="/register-clinic" element={!user ? <ClinicRegistration /> : (redirectPath ? <Navigate to={redirectPath} /> : <Navigate to="/dashboard" />)} />
           <Route path="/book-appointment" element={!user ? <PatientRegistration /> : (redirectPath ? <Navigate to={redirectPath} /> : <Navigate to="/portal" />)} />
           <Route path="/login/patient" element={!user ? <PatientLogin /> : (redirectPath ? <Navigate to={redirectPath} /> : <Navigate to="/portal" />)} />
+          <Route path="/login/patient/otp" element={<PatientOTPLogin />} />
+          <Route path="/portal/setup" element={<PatientProfileSetup />} />
+          <Route path="/splash" element={<PatientSplashScreen />} />
           <Route path="/login" element={!user ? <Navigate to="/" /> : (redirectPath ? <Navigate to={redirectPath} /> : <LandingPage />)} />
           <Route path="/*" element={
             user ? (

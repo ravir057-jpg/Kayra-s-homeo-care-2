@@ -186,7 +186,7 @@ export default function BillingManager({ profile }: BillingManagerProps) {
         keyId = key;
       }
 
-      await processPayment(amount, {
+      const response: any = await processPayment(amount, {
         razorpayKeyId: keyId,
         invoiceId: invId,
         doctorId: invoice?.doctorId || profile?.uid,
@@ -199,10 +199,18 @@ export default function BillingManager({ profile }: BillingManagerProps) {
 
       await updateDoc(doc(db, 'invoices', invId), { 
         status: 'Paid',
-        paidAt: new Date().toISOString()
+        paidAt: new Date().toISOString(),
+        razorpayPaymentId: response.razorpay_payment_id,
+        razorpayOrderId: response.razorpay_order_id,
+        razorpaySignature: response.razorpay_signature,
+        updatedAt: new Date().toISOString()
       });
       
-      setInvoices(prev => prev.map(inv => inv.id === invId ? { ...inv, status: 'Paid' } : inv));
+      setInvoices(prev => prev.map(inv => inv.id === invId ? { 
+        ...inv, 
+        status: 'Paid', 
+        razorpayPaymentId: response.razorpay_payment_id 
+      } : inv));
       toast.success('Payment settled successfully');
     } catch (error) {
       console.error('Payment failed', error);

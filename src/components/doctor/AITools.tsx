@@ -91,8 +91,8 @@ export default function AITools() {
   };
 
   return (
-    <div className="flex flex-col lg:grid lg:grid-cols-4 gap-6 lg:gap-8 h-full pb-20 lg:pb-0">
-      <div className="flex flex-row lg:flex-col gap-3 lg:gap-4 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0 scrollbar-hide shrink-0 mask-linear-r lg:mask-none">
+    <div className="flex flex-col lg:grid lg:grid-cols-4 gap-4 lg:gap-8 h-full pb-20 lg:pb-0">
+      <div className="flex flex-row lg:flex-col gap-2 lg:gap-4 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0 scrollbar-hide shrink-0">
         <ToolButton 
           active={activeTab === 'repertory'} 
           onClick={() => { setActiveTab('repertory'); clearInput(); }} 
@@ -130,119 +130,95 @@ export default function AITools() {
         />
       </div>
 
-      <div className="lg:col-span-3 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden min-h-[600px]">
-        <div className="p-5 lg:p-8 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50/50 gap-4">
-          <div>
-            <h2 className="text-lg lg:text-xl font-bold text-slate-800">
+      <div className="lg:col-span-3 bg-white rounded-xl lg:rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden min-h-[350px] lg:min-h-[600px]">
+        <div className="px-4 py-3 lg:p-8 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50/50 gap-2">
+          <div className="flex flex-col gap-0.5">
+            <h2 className="text-xs lg:text-xl font-bold text-slate-800 flex items-center gap-2">
+              <Sparkles size={14} className="text-indigo-500 lg:hidden" />
               {activeTab === 'repertory' ? 'Intelligent Repertory' : 
                activeTab === 'analysis' ? 'Advanced Repertory Analyst' : 
                activeTab === 'case' ? 'Clinical Case Analyzer' : 
                activeTab === 'report' ? `${t('diagnostics')} & ${t('report_analyzer')}` : 
                'Materia Medica Master Search'}
             </h2>
-            <p className="text-xs lg:text-sm text-slate-500">
+            <p className="hidden sm:block text-[9px] lg:text-sm text-slate-500 leading-tight">
               {activeTab === 'report' ? 'Upload pathology or radiology reports for instant AI analysis.' : 
                activeTab === 'mm' ? 'Searching Allen, Nash, Clarke, Boericke, Kent, and Phatak.' :
                activeTab === 'analysis' ? 'Detailed rubric selection, remedy grading, and miasmatic background.' :
                'Provide symptoms or case details.'}
             </p>
           </div>
-          <div className="w-fit px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-bold uppercase tracking-widest border border-indigo-100 flex items-center gap-1 shadow-sm">
-             <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse"></div>
-             Gemini 2.0 Flash AI
+          <div className="shrink-0 px-2 py-0.5 lg:px-3 lg:py-1 bg-indigo-50 text-indigo-700 rounded-full text-[7px] lg:text-[10px] font-bold uppercase tracking-widest border border-indigo-100 flex items-center gap-1 shadow-sm w-fit">
+             <div className="w-1 h-1 lg:w-1.5 lg:h-1.5 bg-indigo-500 rounded-full animate-pulse"></div>
+             Gemini 1.5 Flash
           </div>
         </div>
 
-        <div className="flex-1 p-5 lg:p-8 overflow-y-auto space-y-6">
+        <div className="flex-1 p-4 lg:p-8 overflow-y-auto space-y-4 lg:space-y-6 scrollbar-hide">
           <AnimatePresence mode="wait">
             {activeTab === 'report' ? (
               <motion.div 
                 key="report-tab"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                className="space-y-4"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="space-y-3"
               >
-                {!selectedFile ? (
-                  <div 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-slate-200 rounded-3xl p-10 lg:p-16 flex flex-col items-center justify-center text-center cursor-pointer hover:border-indigo-400 hover:bg-slate-50 transition-all group"
-                  >
-                    <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mb-4 text-slate-400 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
-                      <Upload size={32} />
-                    </div>
-                    <h3 className="font-bold text-slate-700">{t('upload_report')}</h3>
-                    <p className="text-xs text-slate-400 mt-2 max-w-[240px]">Support for JPG, PNG, or PDF up to 10MB (Blood tests, MRI, CT, X-Ray)</p>
-                    <input 
-                      type="file" 
-                      ref={fileInputRef} 
-                      onChange={handleFileChange} 
-                      className="hidden" 
-                      accept="image/*,application/pdf"
-                    />
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="bg-white border border-slate-200 rounded-[2rem] p-6 relative group shadow-sm transition-all hover:shadow-md">
-                      {selectedFile.mimeType.includes('image') ? (
-                        <div className="w-full aspect-video rounded-2xl overflow-hidden mb-4 bg-slate-100 border border-slate-100 relative group-hover:border-indigo-200 transition-all">
-                          <img src={selectedFile.preview} className="w-full h-full object-contain" alt="Medical Report Preview" />
-                          <div className="absolute inset-0 bg-indigo-900/0 group-hover:bg-indigo-900/5 transition-all" />
-                        </div>
-                      ) : (
-                        <div className="w-full aspect-video rounded-2xl bg-indigo-50 border border-indigo-100/50 flex flex-col items-center justify-center mb-4 transition-all group-hover:bg-indigo-100/50">
-                          <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center text-indigo-600 mb-3">
-                            <FileText size={32} />
-                          </div>
-                          <span className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">PDF Document</span>
-                        </div>
-                      )}
-                      
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500 border border-slate-200 shadow-sm">
-                            {selectedFile.mimeType.includes('image') ? <ImageIcon size={20} /> : <FileText size={20} />}
-                          </div>
-                          <div>
-                            <p className="font-bold text-slate-700 text-sm truncate max-w-[150px] sm:max-w-md">{selectedFile.name}</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              <div className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse" />
-                              <p className="text-[10px] text-emerald-600 uppercase tracking-widest font-black">Ready for AI Analysis</p>
-                            </div>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => setSelectedFile(null)}
-                          className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm active:scale-95"
-                          title="Remove file"
-                        >
-                          <X size={20} />
-                        </button>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  {!selectedFile ? (
+                    <div 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex-1 flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:border-indigo-400 hover:bg-white transition-all group shadow-sm"
+                    >
+                      <div className="p-1.5 bg-indigo-50 rounded-md text-indigo-600 transition-colors shrink-0">
+                        <Upload size={14} />
                       </div>
+                      <span className="font-bold text-[10px] text-slate-600 truncate leading-none">Upload Report Tab</span>
+                      <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        onChange={handleFileChange} 
+                        className="hidden" 
+                        accept="image/*,application/pdf"
+                      />
                     </div>
-                  </div>
-                )}
-                
-                {selectedFile && !result && (
-                   <textarea 
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    className="w-full p-4 lg:p-6 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-indigo-500 min-h-[80px] transition-all text-slate-700 placeholder:text-slate-300 text-sm"
-                    placeholder="Add specific questions or notes for the AI (optional)..."
-                  />
-                )}
+                  ) : (
+                    <div className="flex-1 flex items-center px-3 py-2 bg-emerald-50/50 border border-emerald-100 rounded-lg gap-2 overflow-hidden">
+                      <div className="w-6 h-6 bg-white rounded flex items-center justify-center text-emerald-600 shadow-sm shrink-0">
+                        {selectedFile.mimeType.includes('image') ? <ImageIcon size={12} /> : <FileText size={12} />}
+                      </div>
+                      <p className="flex-1 font-bold text-slate-700 text-[10px] truncate">{selectedFile.name}</p>
+                      <button 
+                        onClick={() => setSelectedFile(null)}
+                        className="p-1 text-slate-400 hover:text-red-500 rounded transition-all shrink-0"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                  
+                  {selectedFile && (
+                    <div className="flex-1 flex items-center gap-2">
+                       <input 
+                        type="text"
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 transition-all text-slate-700 placeholder:text-slate-400 text-[10px]"
+                        placeholder="Any specific questions? (optional)"
+                      />
+                    </div>
+                  )}
+                </div>
               </motion.div>
             ) : (
               <motion.div
                 key="text-tab"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
               >
                 <textarea 
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  className="w-full p-4 lg:p-6 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-indigo-500 min-h-[150px] lg:min-h-[200px] transition-all text-slate-700 placeholder:text-slate-300 text-sm lg:text-base"
+                  className="w-full p-4 lg:p-6 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 min-h-[100px] lg:min-h-[200px] transition-all text-slate-700 placeholder:text-slate-400 text-xs lg:text-base"
                   placeholder={activeTab === 'repertory' ? "Enter patient symptoms..." : 
                                activeTab === 'analysis' ? "Enter symptoms for detailed repertory and miasmatic analysis..." : 
                                activeTab === 'case' ? "Paste clinical notes..." : 
@@ -255,17 +231,18 @@ export default function AITools() {
           <button 
             onClick={handleRun}
             disabled={loading || (activeTab === 'report' ? !selectedFile : !input)}
-            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold text-base lg:text-lg hover:bg-slate-900 transition-all shadow-xl shadow-indigo-100 disabled:opacity-50 disabled:grayscale active:scale-[0.98] flex items-center justify-center gap-3"
+            className="w-full py-2.5 lg:py-4 bg-indigo-600 text-white rounded-xl lg:rounded-2xl font-bold text-xs lg:text-lg hover:bg-slate-900 transition-all shadow-xl shadow-indigo-100 disabled:opacity-50 disabled:grayscale active:scale-[0.98] flex items-center justify-center gap-2 lg:gap-3"
           >
             {loading ? (
               <>
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                AI is processing...
+                <div className="w-3 h-3 lg:w-5 lg:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                Analyzing...
               </>
             ) : (
               <>
-                <Brain size={20} />
-                {activeTab === 'report' ? t('analyze_report') : t('consult_ai')}
+                <Brain size={14} className="lg:hidden" />
+                <Brain size={20} className="hidden lg:block" />
+                {activeTab === 'report' ? 'Run Diagnostics' : 'Consult AI'}
               </>
             )}
           </button>
@@ -274,27 +251,30 @@ export default function AITools() {
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-slate-900 rounded-3xl p-6 lg:p-8 text-white relative overflow-hidden"
+              className="bg-slate-900 rounded-xl lg:rounded-2xl p-4 lg:p-6 text-white relative overflow-hidden"
             >
-              <div className="relative z-10 markdown-body prose prose-invert max-w-none prose-sm lg:prose-base leading-relaxed">
+              <div className="relative z-10 markdown-body prose prose-invert max-w-none prose-xs sm:prose-sm lg:prose-base leading-tight">
                 <ReactMarkdown>{result}</ReactMarkdown>
               </div>
-              <div className="absolute top-0 right-0 p-4 opacity-10">
-                <Lightbulb size={60} className="text-emerald-500" />
+              <div className="absolute top-0 right-0 p-3 lg:p-4 opacity-10">
+                <Lightbulb size={32} className="text-emerald-500 lg:hidden" />
+                <Lightbulb size={48} className="text-emerald-500 hidden lg:block" />
               </div>
               
-              <div className="mt-8 pt-6 border-t border-white/10 flex flex-wrap gap-4 relative z-10">
+              <div className="mt-4 lg:mt-6 pt-3 lg:pt-4 border-t border-white/10 flex flex-col sm:flex-row gap-2 lg:gap-3 relative z-10">
                 <button 
                   onClick={handleCopyToClipboard}
-                  className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all border border-white/10"
+                  className="flex items-center justify-center gap-2 px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[10px] lg:text-xs font-bold transition-all border border-white/10"
                 >
-                  <Copy size={16} /> Copy to Notes
+                  <Copy size={12} className="lg:hidden" />
+                  <Copy size={14} className="hidden lg:block" /> Copy to Notes
                 </button>
                 <button 
                   onClick={handleSaveToPrescription}
-                  className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-500/20"
+                  className="flex items-center justify-center gap-2 px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-lg text-[10px] lg:text-xs font-bold transition-all shadow-lg shadow-emerald-500/20"
                 >
-                  <FilePlus size={16} /> Save to Prescription
+                  <FilePlus size={12} className="lg:hidden" />
+                  <FilePlus size={14} className="hidden lg:block" /> Save to Prescription
                 </button>
               </div>
             </motion.div>
@@ -309,19 +289,20 @@ function ToolButton({ active, onClick, icon: Icon, title, desc }: any) {
   return (
     <button 
       onClick={onClick}
-      className={`w-full p-4 rounded-2xl border text-left transition-all group shrink-0 ${
+      className={`p-2.5 lg:p-4 rounded-xl lg:rounded-2xl border text-left transition-all group lg:w-full flex-1 lg:flex-none min-w-[100px] sm:min-w-[140px] lg:min-w-0 ${
         active 
-          ? 'bg-indigo-900 border-indigo-800 text-white shadow-xl shadow-indigo-100' 
+          ? 'bg-indigo-900 border-indigo-800 text-white shadow-lg lg:shadow-xl shadow-indigo-100' 
           : 'bg-white border-slate-100 text-slate-600 hover:border-indigo-200'
       }`}
     >
-      <div className="flex gap-4 items-center">
-        <div className={`p-3 rounded-xl transition-colors ${active ? 'bg-white/10' : 'bg-slate-50 group-hover:bg-indigo-50 text-slate-400 group-hover:text-indigo-600'}`}>
-          <Icon size={24} />
+      <div className="flex flex-col sm:flex-row gap-2 lg:gap-4 items-center sm:items-start lg:items-center">
+        <div className={`p-2 lg:p-3 rounded-lg lg:rounded-xl transition-colors shrink-0 ${active ? 'bg-white/10' : 'bg-slate-50 group-hover:bg-indigo-50 text-slate-400 group-hover:text-indigo-600'}`}>
+          <Icon size={18} className="lg:hidden" />
+          <Icon size={24} className="hidden lg:block" />
         </div>
-        <div className="hidden sm:block">
-          <p className="font-bold text-sm lg:text-base">{title}</p>
-          <p className={`text-[10px] uppercase font-bold tracking-wider ${active ? 'text-indigo-300' : 'text-slate-400'}`}>{desc}</p>
+        <div className="text-center sm:text-left">
+          <p className="font-bold text-[10px] sm:text-xs lg:text-base leading-tight">{title}</p>
+          <p className={`text-[8px] lg:text-[10px] uppercase font-bold tracking-wider mt-0.5 ${active ? 'text-indigo-300' : 'text-slate-400'}`}>{desc}</p>
         </div>
       </div>
     </button>

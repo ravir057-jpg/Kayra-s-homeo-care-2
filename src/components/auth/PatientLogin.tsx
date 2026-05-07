@@ -109,17 +109,17 @@ export default function PatientLogin() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4 sm:p-6 relative overflow-hidden">
+    <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-slate-50 p-4 relative overflow-hidden">
       {/* Background patterns */}
-      <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-emerald-50/40 rounded-full blur-[100px] -mr-20 -mt-20 pointer-events-none"></div>
+      <div className="absolute top-0 right-0 w-[300px] h-[300px] sm:w-[400px] sm:h-[400px] bg-emerald-50/40 rounded-full blur-[80px] sm:blur-[100px] -mr-20 -mt-20 pointer-events-none"></div>
       
       <motion.div 
-        initial={{ opacity: 0, scale: 0.98 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/60 p-6 sm:p-10 z-10 border border-slate-100 mx-4"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md bg-white rounded-[2rem] sm:rounded-3xl shadow-2xl shadow-slate-200/80 p-5 sm:p-10 z-10 border border-slate-100"
       >
-        <Link to="/" className="inline-flex items-center gap-2 text-slate-400 hover:text-slate-600 text-sm font-medium mb-6 transition-colors">
-          <ArrowLeft size={16} /> Back to Gateway
+        <Link to="/" className="inline-flex items-center gap-2 text-slate-400 hover:text-slate-600 text-[10px] sm:text-xs font-bold uppercase tracking-widest mb-6 transition-colors">
+          <ArrowLeft size={14} /> Back to Home
         </Link>
 
         <div className="flex flex-col items-center mb-8">
@@ -145,7 +145,7 @@ export default function PatientLogin() {
               type="text" 
               value={registrationNumber}
               onChange={(e) => setRegistrationNumber(e.target.value.toUpperCase())}
-              className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-sm font-black text-slate-700 placeholder:font-medium placeholder:text-slate-300"
+              className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-base font-black text-slate-700 placeholder:font-medium placeholder:text-slate-300"
               placeholder="e.g. KHC-XXXXXX"
             />
           </div>
@@ -156,7 +156,7 @@ export default function PatientLogin() {
               type="tel" 
               value={mobileNumber}
               onChange={(e) => setMobileNumber(e.target.value)}
-              className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-sm font-bold text-slate-700 placeholder:font-medium placeholder:text-slate-300"
+              className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-base font-bold text-slate-700 placeholder:font-medium placeholder:text-slate-300"
               placeholder="Enter registered mobile number"
             />
           </div>

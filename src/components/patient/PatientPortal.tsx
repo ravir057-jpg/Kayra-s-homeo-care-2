@@ -49,7 +49,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
-import { collection, query, where, getDocs, doc, updateDoc, addDoc, orderBy, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, addDoc, orderBy, getDoc, onSnapshot } from 'firebase/firestore';
 import { Patient, Appointment, Prescription, UserProfile, Feedback, Invoice, SymptomLog } from '../../types';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -60,13 +60,15 @@ import { generateJitsiUrl } from '../../lib/video';
 import VideoMeetingRoom from '../shared/VideoMeetingRoom';
 import LoadingScreen from '../shared/LoadingScreen';
 import PatientBillingHistory from './PatientBillingHistory';
+import DoctorDiscovery from './DoctorDiscovery';
+import AppointmentBooking from './AppointmentBooking';
 import Logo from '../Logo';
 
 export default function PatientPortal() {
   const { t } = useLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const currentTab = (searchParams.get('tab') as 'overview' | 'prescriptions' | 'appointments' | 'profile' | 'doctors' | 'history' | 'billing' | 'logs') || 'overview';
+  const currentTab = (searchParams.get('tab') as 'overview' | 'prescriptions' | 'appointments' | 'profile' | 'doctors' | 'history' | 'billing' | 'logs' | 'reports') || 'overview';
   
   const [patientData, setPatientData] = useState<Patient | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -95,6 +97,8 @@ export default function PatientPortal() {
   const [isBooking, setIsBooking] = useState(false);
   const [isRescheduling, setIsRescheduling] = useState(false);
   const [isGrievanceOpen, setIsGrievanceOpen] = useState(false);
+  const [isBookingDoctor, setIsBookingDoctor] = useState(false);
+  const [reports, setReports] = useState<any[]>([]);
   const [grievanceData, setGrievanceData] = useState({
     doctorId: '',
     doctorName: '',
@@ -232,24 +236,14 @@ export default function PatientPortal() {
 
     try {
       let patient: Patient | null = null;
-
-      // 1. Try to find by UID (Primary for claimed records or Google login)
       if (user) {
         const uidQ = query(collection(db, 'patients'), where('uid', '==', user.uid));
         const uidSnap = await getDocs(uidQ);
         if (!uidSnap.empty) {
           patient = { id: uidSnap.docs[0].id, ...uidSnap.docs[0].data() } as Patient;
-        } else if (user.email) {
-          // Fallback for Google login users who might not have UID in patient doc yet
-          const emailQ = query(collection(db, 'patients'), where('email', '==', user.email));
-          const emailSnap = await getDocs(emailQ);
-          if (!emailSnap.empty) {
-            patient = { id: emailSnap.docs[0].id, ...emailSnap.docs[0].data() } as Patient;
-          }
         }
       }
-
-      // 2. Try to find by session (if UID lookup failed)
+      
       if (!patient && session?.patientId) {
         const docRef = doc(db, 'patients', session.patientId);
         const docSnap = await getDoc(docRef);
@@ -257,112 +251,61 @@ export default function PatientPortal() {
           patient = { id: docSnap.id, ...docSnap.data() } as Patient;
         }
       }
-      
-      // 3. Fallback to mobile number (Legacy or partial sessions)
-      if (!patient && session?.mobileNumber) {
-        const mobileQ = query(collection(db, 'patients'), where('mobileNumber', '==', session.mobileNumber));
-        const mobileSnap = await getDocs(mobileQ);
-        if (!mobileSnap.empty) {
-          patient = { id: mobileSnap.docs[0].id, ...mobileSnap.docs[0].data() } as Patient;
-        }
-      }
-      
+
       if (patient) {
         setPatientData(patient);
         setFormData(patient);
 
-        // Fetch appointments
-        const apptQ = query(
-          collection(db, 'appointments'), 
-          where('patientId', '==', patient.id),
-          orderBy('date', 'desc')
-        );
-        const apptSnap = await getDocs(apptQ);
-        setAppointments(apptSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment)));
-
-        // Fetch prescriptions
-        const rxQ = query(
-          collection(db, 'prescriptions'),
-          where('patientId', '==', patient.id),
-          orderBy('createdAt', 'desc')
-        );
-        const rxSnap = await getDocs(rxQ);
-        setPrescriptions(rxSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Prescription)));
-
-        // Fetch feedbacks
-        const feedbackQ = query(
-          collection(db, 'feedbacks'),
-          where('patientId', '==', patient.id)
-        );
-        const feedbackSnap = await getDocs(feedbackQ);
-        const fbData = feedbackSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Feedback));
-        setFeedbacks(fbData);
-
-        // Fetch invoices
-        const invoiceQ = query(
-          collection(db, 'invoices'),
-          where('patientId', '==', patient.id),
-          orderBy('createdAt', 'desc')
-        );
-        const invoiceSnap = await getDocs(invoiceQ);
-        setInvoices(invoiceSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
-
-        // Fetch symptom logs
-        const logsQ = query(
-          collection(db, 'symptom_logs'),
-          where('patientId', '==', patient.id),
-          orderBy('createdAt', 'desc')
-        );
-        const logsSnap = await getDocs(logsQ);
-        const logsData = logsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SymptomLog));
-        setSymptomLogs(logsData);
-
-        // Generate Recent Activity
-        const recentActivity: any[] = [];
-        apptSnap.docs.slice(0, 3).forEach(doc => {
-          const d = doc.data();
-          recentActivity.push({
-            id: doc.id,
-            type: 'booking',
-            title: `${d.type} Consultation with Dr. ${d.doctorName}`,
-            time: d.createdAt || d.updatedAt || new Date().toISOString(),
-            status: d.status
-          });
+        // REAL-TIME SYNC for Appointments
+        const apptQuery = query(collection(db, 'appointments'), where('patientId', '==', patient.id));
+        onSnapshot(apptQuery, (snapshot) => {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+          setAppointments(data.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+          
+          // Generate real-time activity feed
+          const activityLog = data.slice(0, 5).map(a => ({
+            id: a.id || Math.random().toString(),
+            type: 'booking' as const,
+            title: `Appt ${a.status}`,
+            time: a.createdAt || new Date().toISOString(),
+            status: a.status
+          }));
+          setActivity(activityLog);
         });
-        rxSnap.docs.slice(0, 2).forEach(doc => {
-          const d = doc.data();
-          recentActivity.push({
-            id: doc.id,
-            type: 'prescription',
-            title: `New Prescription for ${d.diagnosis}`,
-            time: d.createdAt || new Date().toISOString(),
-          });
+
+        // REAL-TIME SYNC for Prescriptions
+        const rxQuery = query(collection(db, 'prescriptions'), where('patientId', '==', patient.id));
+        onSnapshot(rxQuery, (snapshot) => {
+          setPrescriptions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Prescription)));
         });
-        logsSnap.docs.slice(0, 2).forEach(doc => {
-          const d = doc.data();
-          recentActivity.push({
-            id: doc.id,
-            type: 'symptom',
-            title: `Logged Symptoms: ${d.symptoms.substring(0, 20)}...`,
-            time: d.createdAt || new Date().toISOString(),
-          });
+
+        // REAL-TIME SYNC for Invoices
+        const invQuery = query(collection(db, 'invoices'), where('patientId', '==', patient.id));
+        onSnapshot(invQuery, (snapshot) => {
+          setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
         });
-        setActivity(recentActivity.sort((a, b) => {
-          const timeA = a.time?.toDate ? a.time.toDate() : new Date(a.time);
-          const timeB = b.time?.toDate ? b.time.toDate() : new Date(b.time);
-          return timeB.getTime() - timeA.getTime();
-        }));
+
+        // REAL-TIME SYNC for Symptom Logs
+        const logsQuery = query(collection(db, 'symptom_logs'), where('patientId', '==', patient.id));
+        onSnapshot(logsQuery, (snapshot) => {
+          setSymptomLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SymptomLog)).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+        });
+
+        // REAL-TIME SYNC for Reports
+        const reportsQuery = query(collection(db, 'medical_reports'), where('patientId', '==', patient.id));
+        onSnapshot(reportsQuery, (snapshot) => {
+          setReports(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
       }
 
-      // Fetch doctors
-      const doctorQ = query(collection(db, 'users'), where('role', '==', 'doctor'));
-      const doctorSnap = await getDocs(doctorQ);
-      const docsList = doctorSnap.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
-      setDoctors(docsList);
-      setFilteredDoctors(docsList);
-
+      // REAL-TIME SYNC for Doctors
+      const drQuery = query(collection(db, 'users'), where('role', '==', 'doctor'));
+      onSnapshot(drQuery, (snapshot) => {
+        const docsList = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+        setDoctors(docsList);
+      });
     } catch (error) {
-       console.error("Error fetching data:", error);
+      console.error("Data fetch error:", error);
     } finally {
       setLoading(false);
     }
@@ -559,6 +502,31 @@ export default function PatientPortal() {
     }
   };
 
+  const handlePaymentSuccess = async (invId: string, response: any) => {
+    try {
+      await updateDoc(doc(db, 'invoices', invId), {
+        status: 'Paid',
+        paidAt: new Date().toISOString(),
+        razorpayPaymentId: response.razorpay_payment_id,
+        razorpayOrderId: response.razorpay_order_id,
+        razorpaySignature: response.razorpay_signature,
+        updatedAt: new Date().toISOString()
+      });
+      
+      await logAction({
+        action: 'Payment Successful',
+        entityType: 'Invoice',
+        entityId: invId,
+        details: `Patient ${patientData?.name} successfully paid invoice`
+      });
+      
+      toast.success('Payment settled successfully');
+      fetchData();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `invoices/${invId}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-50">
@@ -641,16 +609,11 @@ export default function PatientPortal() {
               icon={<Home size={16} />}
             />
             <TabButton 
-              active={currentTab === 'history'} 
-              onClick={() => setActiveTab('history')}
-              label="Medical History"
-              icon={<History size={16} />}
-            />
-            <TabButton 
-              active={currentTab === 'logs'} 
-              onClick={() => setActiveTab('logs')}
-              label="Symptom Log"
-              icon={<Activity size={16} />}
+              active={currentTab === 'appointments'} 
+              onClick={() => setActiveTab('appointments')}
+              label="Appointments"
+              icon={<Calendar size={16} />}
+              hasBadge={appointments.some(a => a.status === 'Scheduled')}
             />
             <TabButton 
               active={currentTab === 'prescriptions'} 
@@ -659,10 +622,16 @@ export default function PatientPortal() {
               icon={<FileText size={16} />}
             />
             <TabButton 
-              active={currentTab === 'appointments'} 
-              onClick={() => setActiveTab('appointments')}
-              label="My Visits"
-              icon={<Calendar size={16} />}
+              active={currentTab === 'history'} 
+              onClick={() => setActiveTab('history')}
+              label="Medical History"
+              icon={<History size={16} />}
+            />
+            <TabButton 
+              active={currentTab === 'logs'} 
+              onClick={() => setActiveTab('logs')}
+              label="Daily Sync"
+              icon={<Activity size={16} />}
             />
             <TabButton 
               active={currentTab === 'doctors'} 
@@ -966,6 +935,43 @@ export default function PatientPortal() {
                     )}
                   </div>
 
+                  {/* Highly Recommended Doctors */}
+                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                    <div className="flex items-center justify-between mb-8">
+                       <h4 className="text-lg font-bold text-slate-800 tracking-tight">Recommended Near You</h4>
+                       <button onClick={() => setActiveTab('doctors')} className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest hover:underline">See All</button>
+                    </div>
+                    <div className="space-y-4">
+                       {doctors.slice(0, 3).map((dr) => (
+                         <div key={dr.uid} className="flex items-center justify-between p-5 bg-slate-50/50 rounded-3xl border border-slate-100 group hover:border-emerald-200 transition-all">
+                            <div className="flex items-center gap-4">
+                               <div className="w-12 h-12 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-slate-400 group-hover:text-emerald-500 transition-colors overflow-hidden">
+                                  {dr.photoURL ? <img src={dr.photoURL} alt={dr.name} className="w-full h-full object-cover" /> : <Stethoscope size={20} />}
+                               </div>
+                               <div>
+                                  <h6 className="font-bold text-slate-800 text-sm">Dr. {dr.name}</h6>
+                                  <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">{dr.specialization || 'Clinical Expert'}</p>
+                               </div>
+                            </div>
+                            <button 
+                              onClick={() => {
+                                setSelectedDoctor(dr);
+                                setIsBookingDoctor(true);
+                              }}
+                              className="px-4 py-2 bg-white border border-slate-200 text-slate-900 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all shadow-sm"
+                            >
+                               Quick Book
+                            </button>
+                         </div>
+                       ))}
+                       {doctors.length === 0 && (
+                          <div className="text-center py-6">
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Finding specialists...</p>
+                          </div>
+                       )}
+                    </div>
+                  </div>
+
                   {/* Recent Activity / Follow-ups */}
                   <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
                     <div className="flex items-center justify-between mb-8">
@@ -1065,110 +1071,107 @@ export default function PatientPortal() {
             {currentTab === 'history' && (
               <motion.div 
                 key="history"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-4 sm:space-y-8"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="space-y-12"
               >
-                <div className="bg-slate-900 p-6 sm:p-8 lg:p-12 rounded-[2rem] sm:rounded-[3rem] text-white relative overflow-hidden mb-4 sm:mb-8">
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-[100px] -mr-32 -mt-32"></div>
+                <div className="bg-slate-900 p-8 sm:p-14 rounded-[3.5rem] text-white relative overflow-hidden shadow-2xl shadow-slate-200">
+                  <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/20 rounded-full blur-[120px] -mr-48 -mt-48 transition-all"></div>
+                  <div className="absolute bottom-0 left-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-[100px] -ml-32 -mb-32"></div>
                   <div className="relative z-10">
-                    <div className="inline-flex items-center gap-2 bg-emerald-500/20 text-emerald-400 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full mb-4 sm:mb-6">
-                      <History size={14} className="sm:size-4" />
-                      <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest">Complete Record</span>
+                    <div className="inline-flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-2 rounded-2xl mb-8 border border-white/10">
+                      <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">Master Health Vault</span>
                     </div>
-                    <h3 className="text-2xl sm:text-3xl font-bold mb-3 sm:mb-4 tracking-tight">Your Medical Timeline</h3>
-                    <p className="text-slate-400 text-xs sm:text-sm max-w-xl leading-relaxed">A chronological journey of your health consultations, prescriptions, and recoveries. All your clinical data is encrypted and synced in real-time.</p>
+                    <h3 className="text-3xl sm:text-5xl font-black mb-6 tracking-tight leading-[1.1]">The Narrative of Your Health Journey</h3>
+                    <p className="text-slate-400 text-sm sm:text-base max-w-2xl leading-relaxed font-medium opacity-80">Every consultation, every remedy, and every diagnostic insight is meticulously recorded here. Your medical past informs a healthier, more predictable future.</p>
                   </div>
                 </div>
 
                 {appointments.length === 0 ? (
-                  <div className="bg-white p-12 sm:p-16 rounded-[2rem] sm:rounded-[2.5rem] border border-dashed border-slate-200 text-center">
-                    <History size={48} className="sm:size-16 mx-auto text-slate-200 mb-6" strokeWidth={1} />
-                    <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">No medical history found yet</p>
+                  <div className="bg-white p-16 sm:p-24 rounded-[4rem] border-2 border-dashed border-slate-100 text-center flex flex-col items-center justify-center">
+                    <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-8 border border-slate-100">
+                      <History size={48} strokeWidth={1} />
+                    </div>
+                    <p className="text-slate-800 font-black uppercase tracking-widest text-[10px] mb-2">Vault is Currently Empty</p>
+                    <p className="text-slate-400 text-xs font-medium max-w-xs">Your medical history will materialize as you engage with our healthcare ecosystem.</p>
                   </div>
                 ) : (
-                  <div className="relative space-y-8 sm:space-y-12 before:absolute before:left-6 sm:before:left-[1.85rem] before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-100">
-                    {appointments.map((appt, idx) => {
-                      const relatedPrescriptions = prescriptions.filter(p => p.appointmentId === appt.id || (p.createdAt.split('T')[0] === appt.date));
+                  <div className="relative space-y-16 pl-4 sm:pl-12 before:absolute before:left-4 sm:before:left-[3rem] before:top-4 before:bottom-4 before:w-1 before:bg-gradient-to-b before:from-emerald-500 before:via-slate-200 before:to-slate-100">
+                    {appointments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((appt, idx) => {
+                      const relatedPrescriptions = prescriptions.filter(p => p.appointmentId === appt.id || (p.createdAt?.split('T')[0] === appt.date));
                       return (
-                        <div key={appt.id} className="relative pl-12 sm:pl-16">
+                        <div key={appt.id} className="relative group">
                           {/* Timeline Dot */}
-                          <div className={`absolute left-0 top-2 w-12 h-12 sm:w-16 sm:h-16 rounded-xl sm:rounded-2xl flex items-center justify-center border-4 border-white shadow-xl z-10 transition-transform hover:scale-110 ${
-                            appt.status === 'Completed' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'
+                          <div className={`absolute -left-12 sm:-left-[3.75rem] w-8 h-8 rounded-full border-4 border-white shadow-lg transition-all z-10 flex items-center justify-center ${
+                            appt.status === 'Completed' ? 'bg-emerald-500' : 'bg-slate-300'
                           }`}>
-                            {appt.status === 'Completed' ? <CheckCircle2 size={18} className="sm:size-6" /> : <Clock size={18} className="sm:size-6" />}
+                            {appt.status === 'Completed' ? <CheckCircle2 size={14} className="text-white" /> : <Clock size={14} className="text-white" />}
                           </div>
 
-                          <div className="bg-white p-5 sm:p-8 rounded-[1.5rem] sm:rounded-[2.5rem] border border-slate-200 shadow-sm hover:shadow-xl hover:shadow-slate-200/40 transition-all flex flex-col lg:flex-row gap-6 sm:gap-8">
-                            <div className="flex-1 space-y-4">
-                              <div className="flex flex-wrap items-center gap-3">
-                                <span className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">{format(new Date(appt.date), 'MMMM do, yyyy')}</span>
-                                <div className="w-1.5 h-1.5 bg-slate-200 rounded-full"></div>
-                                <span className={`text-[8px] sm:text-[10px] font-bold uppercase px-2 sm:px-3 py-1 rounded-lg ${
-                                  appt.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'
-                                }`}>
-                                  {appt.status}
-                                </span>
-                              </div>
-                              
-                              <div>
-                                <h4 className="text-lg sm:text-xl font-bold text-slate-800 mb-1 leading-tight">{appt.type === 'Online' ? 'Telehealth Consultation' : 'In-Clinic Assessment'}</h4>
-                                <p className="text-xs sm:text-sm text-slate-500 font-medium italic">Reason: {appt.reason || 'General Health Check'}</p>
-                              </div>
-
-                              <div className="flex items-center gap-3 sm:gap-4 pt-2">
-                                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-slate-50 rounded-lg sm:rounded-xl flex items-center justify-center text-emerald-600">
-                                  <Stethoscope size={16} className="sm:size-5" />
-                                </div>
-                                <div>
-                                  <p className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Attending Physician</p>
-                                  <p className="text-xs sm:text-sm font-bold text-slate-800">Dr. {appt.doctorName}</p>
+                          <div className="bg-white p-1 sm:p-2 pr-6 rounded-[2.5rem] border border-slate-200 hover:border-emerald-200 transition-all shadow-sm hover:shadow-2xl hover:shadow-emerald-500/5 overflow-hidden">
+                            <div className="flex flex-col lg:flex-row gap-8">
+                              <div className="w-full lg:w-48 bg-slate-50 p-6 rounded-[2rem] flex flex-col items-center justify-center text-center shrink-0 border border-slate-100">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Consult Date</span>
+                                <p className="text-2xl font-black text-slate-800 leading-none">{format(new Date(appt.date), 'dd')}</p>
+                                <p className="text-xs font-black text-slate-500 uppercase tracking-widest mt-1">{format(new Date(appt.date), 'MMM yyyy')}</p>
+                                <div className="mt-4 px-3 py-1 bg-white rounded-full border border-slate-200 text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                                  {appt.time}
                                 </div>
                               </div>
-                            </div>
+                              <div className="flex-1 py-4 sm:py-6 pl-4 sm:pl-0">
+                                <div className="flex flex-wrap items-center gap-3 mb-4">
+                                  <h5 className="text-xl font-black text-slate-800 tracking-tight">Clinical Assessment</h5>
+                                  <span className={`text-[9px] font-black uppercase px-3 py-1 rounded-full ${
+                                    appt.status === 'Completed' ? 'bg-emerald-500 text-white' : 'bg-slate-400 text-white'
+                                  }`}>
+                                    {appt.status}
+                                  </span>
+                                </div>
 
-                            <div className="lg:w-80 flex flex-col justify-center border-t lg:border-t-0 lg:border-l border-slate-100 pt-5 sm:pt-6 lg:pt-0 lg:pl-8 space-y-4">
-                              {relatedPrescriptions.length > 0 ? (
-                                <div className="space-y-4">
-                                  <p className="text-[8px] sm:text-[10px] font-bold text-emerald-600 uppercase tracking-[0.2em] mb-2 sm:mb-4">Treatment Issued</p>
-                                  {relatedPrescriptions.map(rx => (
-                                    <div key={rx.id} className="space-y-3">
-                                      <div className="flex items-center justify-between">
-                                        <p className="text-xs sm:text-sm font-bold text-slate-800">{rx.diagnosis}</p>
-                                        <button 
-                                          onClick={() => downloadPrescriptionList(rx)}
-                                          className="p-1.5 sm:p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors"
-                                          title="Download PDF"
-                                        >
-                                          <Download size={14} className="sm:size-4" />
-                                        </button>
-                                      </div>
-                                      <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                                        {rx.medications.map((m, mIdx) => (
-                                          <span key={mIdx} className="text-[8px] sm:text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md uppercase tracking-wider">
-                                            {m.name}
-                                          </span>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                                  <div className="space-y-4">
+                                    <div className="space-y-1">
+                                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Primary Practitioner</p>
+                                      <p className="text-sm font-bold text-slate-800">Dr. {appt.doctorName}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Clinical Reasoning</p>
+                                      <p className="text-sm font-medium text-slate-500 italic leading-relaxed">
+                                        "{appt.reason || 'Routine follow-up for health maintenance'}"
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                                    <div className="flex items-center justify-between mb-4">
+                                      <p className="text-[9px] font-black text-slate-800 uppercase tracking-widest">Related Findings</p>
+                                      <Zap size={14} className="text-amber-400" />
+                                    </div>
+                                    {relatedPrescriptions.length > 0 ? (
+                                      <div className="space-y-3">
+                                        {relatedPrescriptions.map(p => (
+                                          <div key={p.id} className="flex items-center justify-between gap-4 p-3 bg-white rounded-xl border border-slate-200 shadow-sm">
+                                            <div className="flex items-center gap-3 min-w-0">
+                                              <FileText size={16} className="text-emerald-500 shrink-0" />
+                                              <p className="text-[10px] font-bold text-slate-700 truncate">{p.diagnosis}</p>
+                                            </div>
+                                            <button 
+                                              onClick={() => downloadPrescriptionList(p)}
+                                              className="p-2 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-all shrink-0"
+                                            >
+                                              <Download size={14} />
+                                            </button>
+                                          </div>
                                         ))}
                                       </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : appt.status === 'Completed' ? (
-                                <div className="text-center py-2 sm:py-4">
-                                  <div className="inline-flex items-center gap-2 text-slate-400 text-[8px] sm:text-[10px] font-bold uppercase tracking-widest bg-slate-50 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full">
-                                    <Info size={12} className="sm:size-3.5" />
-                                    No Prescription Issued
+                                    ) : (
+                                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">No documents attached</p>
+                                    )}
                                   </div>
                                 </div>
-                              ) : (
-                                <div className="text-center py-2 sm:py-4">
-                                  <div className="inline-flex items-center gap-2 text-indigo-400 text-[8px] sm:text-[10px] font-bold uppercase tracking-widest bg-indigo-50 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full">
-                                    <Clock size={12} className="sm:size-3.5" />
-                                    Upcoming Visit
-                                  </div>
-                                </div>
-                              )}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1185,68 +1188,92 @@ export default function PatientPortal() {
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
-                className="space-y-4"
+                className="space-y-8"
               >
-                <div className="bg-emerald-50 p-6 sm:p-8 rounded-2xl sm:rounded-3xl border border-emerald-100 flex items-start sm:items-center gap-4 sm:gap-6 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl -mr-16 -mt-16 pointer-events-none"></div>
-                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-white rounded-xl sm:rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm shrink-0 border border-emerald-50">
-                    <Sparkles size={24} className="sm:size-7" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-800 text-base sm:text-lg mb-1 leading-none">Your Healing Plan</h4>
-                    <p className="text-xs sm:text-sm text-slate-500 font-medium leading-relaxed max-w-xl">Your practitioner has prescribed personalized remedies. Adhering to the specified schedule ensures optimal therapeutic results.</p>
+                <div className="bg-emerald-500 p-8 sm:p-14 rounded-[3.5rem] text-white relative overflow-hidden shadow-2xl shadow-emerald-500/20">
+                  <div className="absolute top-0 right-0 w-96 h-96 bg-white/20 rounded-full blur-[120px] -mr-48 -mt-48 transition-all"></div>
+                  <div className="relative z-10">
+                    <div className="inline-flex items-center gap-3 bg-white/20 backdrop-blur-md px-4 py-2 rounded-2xl mb-8 border border-white/20">
+                      <Sparkles size={16} className="text-white" />
+                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Clinical Compliance</span>
+                    </div>
+                    <h3 className="text-3xl sm:text-5xl font-black mb-6 tracking-tight leading-[1.1]">Active Health Redemptions</h3>
+                    <p className="text-emerald-50 text-sm sm:text-base max-w-2xl leading-relaxed font-medium opacity-90">Your therapeutic regimen is detailed below. Each plan is chemically optimized for your specific physiology. Follow the dosage instructions strictly for maximum biological efficacy.</p>
                   </div>
                 </div>
 
                 {prescriptions.length === 0 ? (
-                  <div className="bg-white p-12 lg:p-20 rounded-2xl sm:rounded-3xl border border-dashed border-slate-200 text-center">
-                    <FileText size={48} className="sm:size-16 mx-auto text-slate-300 mb-6" strokeWidth={1} />
-                    <h5 className="text-slate-800 font-bold uppercase tracking-widest text-[10px] sm:text-xs">Awaiting First Prescription</h5>
-                    <p className="text-slate-400 text-[10px] sm:text-xs mt-3 max-w-xs mx-auto font-medium">Once your doctor issues a remedy plan, it will appear here for viewing and download.</p>
+                  <div className="bg-white p-16 sm:p-24 rounded-[4rem] border-2 border-dashed border-slate-100 text-center flex flex-col items-center justify-center">
+                    <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-8 border border-slate-100">
+                      <FileText size={48} strokeWidth={1} />
+                    </div>
+                    <p className="text-slate-800 font-black uppercase tracking-widest text-[10px] mb-2">Plan Repository Clean</p>
+                    <p className="text-slate-400 text-xs font-medium max-w-xs">No pharmaceutical plans have been issued to your Health ID at this time.</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-4">
+                  <div className="grid grid-cols-1 gap-6">
                     {prescriptions.map((rx) => {
                       const dr = doctors.find(d => d.uid === rx.doctorId);
                       return (
-                        <div key={rx.id} className="bg-white p-5 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 hover:border-emerald-200 transition-all group flex flex-col sm:flex-row items-center justify-between gap-5 sm:gap-6 shadow-sm hover:shadow-xl hover:shadow-emerald-500/5 text-center sm:text-left">
-                          <div className="flex flex-col sm:flex-row gap-4 sm:gap-5 w-full sm:w-auto items-center sm:items-start text-center sm:text-left">
-                            <div className="w-12 h-12 sm:w-14 sm:h-14 bg-slate-50 rounded-xl sm:rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-emerald-50 group-hover:text-emerald-500 transition-all shrink-0 border border-slate-100">
-                              <FileText size={24} className="sm:size-7" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 mb-2">
-                                <h5 className="font-bold text-slate-800 text-base truncate">{rx.diagnosis}</h5>
-                                <span className="text-[10px] bg-slate-100 text-slate-500 px-3 py-1 rounded-full font-bold tracking-widest">DRX-{rx.id?.substring(0,4)?.toUpperCase()}</span>
+                        <div key={rx.id} className="bg-white p-1 pr-6 rounded-[2.5rem] border border-slate-200 hover:border-emerald-200 transition-all shadow-sm hover:shadow-2xl hover:shadow-emerald-500/5 group">
+                          <div className="flex flex-col lg:flex-row gap-8">
+                            <div className="w-full lg:w-64 bg-emerald-50 p-8 rounded-[2rem] flex flex-col items-center justify-center text-center shrink-0 border border-emerald-100">
+                              <FileText size={36} className="text-emerald-500 mb-6" />
+                              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Vault Registry</span>
+                              <p className="text-xs font-black text-slate-800 tracking-tighter">DRX-{rx.id?.substring(0,8)?.toUpperCase()}</p>
+                              <div className="mt-8 pt-6 border-t border-emerald-100 w-full space-y-2">
+                                <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Date Issued</p>
+                                <p className="text-sm font-black text-slate-800">{format(new Date(rx.createdAt), 'dd MMM yyyy')}</p>
                               </div>
-                              <div className="flex flex-wrap justify-center sm:justify-start gap-x-4 sm:gap-x-6 gap-y-2">
-                                <div className="flex items-center gap-2 text-[10px] sm:text-xs text-slate-500 font-bold">
-                                  <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-slate-100 flex items-center justify-center text-[8px] sm:text-[10px] text-slate-600">
-                                    {(dr?.name || 'DR').substring(0,2).toUpperCase()}
+                            </div>
+
+                            <div className="flex-1 py-8 pl-4 sm:pl-0">
+                              <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+                                <h5 className="text-2xl font-black text-slate-800 tracking-tight">{rx.diagnosis}</h5>
+                                <button 
+                                  onClick={() => downloadPrescriptionList(rx)}
+                                  className="px-8 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 transition-all active:scale-95 shadow-xl shadow-slate-200"
+                                >
+                                  Export as PDF
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                                <div className="space-y-4">
+                                  <div className="space-y-1">
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Issuing Specialist</p>
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-500">DR</div>
+                                      <p className="text-sm font-bold text-slate-800">Dr. {dr?.name || 'Practitioner'}</p>
+                                    </div>
                                   </div>
-                                  {dr?.name || 'Practitioner'}
+                                  <div className="space-y-1">
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Clinical Status</p>
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-black uppercase tracking-wider">
+                                      <Zap size={10} fill="currentColor" /> Active Regimen
+                                    </span>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2 text-[10px] sm:text-xs text-slate-500 font-medium">
-                                  <Calendar size={12} className="text-slate-300 sm:size-3.5" />
-                                  {format(new Date(rx.createdAt), 'dd MMM yyyy')}
-                                </div>
-                                <div className="flex items-center gap-2 text-[10px] sm:text-xs text-emerald-600 font-bold bg-emerald-50 px-2 sm:px-3 py-1 rounded-lg">
-                                  {rx.medications.length} Active Remedies
+
+                                <div className="col-span-1 lg:col-span-2 bg-slate-50 p-8 rounded-3xl border border-slate-100">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-6">Medication Inventory</p>
+                                  <div className="flex flex-wrap gap-3">
+                                    {rx.medications.map((m, mIdx) => (
+                                      <div key={mIdx} className="px-5 py-3 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                                        <div className="w-2 h-2 rounded-full bg-emerald-400"></div>
+                                        <div>
+                                          <p className="text-[11px] font-black text-slate-800 tracking-tight leading-none">{m.name}</p>
+                                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1.5">{m.dosage}</p>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                          <div className="flex gap-3 w-full sm:w-auto">
-                            <button 
-                              onClick={() => downloadPrescriptionList(rx)}
-                              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 sm:py-4 bg-slate-900 text-white hover:bg-slate-800 rounded-xl sm:rounded-2xl text-[10px] sm:text-[11px] font-bold uppercase tracking-widest transition-all active:scale-95"
-                            >
-                              <Download size={16} />
-                              Download Plan
-                            </button>
                           </div>
                         </div>
-                      );
+                      )
                     })}
                   </div>
                 )}
@@ -1259,87 +1286,123 @@ export default function PatientPortal() {
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
-                className="space-y-4"
+                className="space-y-8"
               >
-                {appointments.length === 0 ? (
-                  <div className="bg-white p-12 lg:p-20 rounded-3xl border border-slate-200 text-center">
-                    <Clock size={64} strokeWidth={1} className="mx-auto text-slate-300 mb-6" />
-                    <h5 className="font-bold text-slate-800 uppercase tracking-widest text-xs">No Upcoming Consultations</h5>
-                    <p className="text-slate-400 text-xs mt-3 max-w-xs mx-auto font-medium">Your schedule is currently clear. Book a check-up to keep your health on track.</p>
-                    <button 
-                      onClick={() => setActiveTab('doctors')}
-                      className="mt-8 px-10 py-4 bg-emerald-500 text-white rounded-2xl text-xs font-bold hover:bg-emerald-600 transition-all active:scale-95 uppercase tracking-widest shadow-xl shadow-emerald-500/20"
-                    >
-                      Browse Doctors
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-4">
-                    {appointments.map((appt) => (
-                      <div key={appt.id} className="bg-white p-6 rounded-3xl border border-slate-200 hover:border-emerald-200 transition-all flex flex-col sm:flex-row items-center justify-between gap-6 shadow-sm">
-                        <div className="flex items-center gap-6 w-full sm:w-auto">
-                          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 ${
-                            appt.type === 'Online' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'
-                          }`}>
-                            {appt.type === 'Online' ? <Video size={32} /> : <Home size={32} />}
-                          </div>
-                             <div className="flex-1">
-                             <div className="flex items-center gap-3 mb-2">
-                               <h5 className="font-bold text-slate-800 text-lg">{appt.type === 'Online' ? 'Video Telehealth' : 'Clinical Visit'}</h5>
-                               <div className="flex gap-2">
-                                 <span className={`text-[10px] font-bold uppercase px-3 py-1 rounded-full ${
-                                   appt.status === 'Completed' ? 'bg-emerald-50 text-emerald-500' :
-                                   appt.status === 'Cancelled' ? 'bg-red-50 text-red-500' : 'bg-orange-50 text-orange-500'
-                                 }`}>
-                                   {appt.status}
-                                 </span>
-                                 {appt.hasVoiceNote && (
-                                   <div className="flex items-center gap-1.5 px-3 py-1 bg-red-50 text-red-500 rounded-full border border-red-100 text-[10px] font-bold uppercase" title="Includes voice symptoms">
-                                     <Mic size={12} fill="currentColor" />
-                                     Voice Note
-                                   </div>
-                                 )}
-                                 {(appt.reason?.toLowerCase().includes('follow-up') || appt.reason?.toLowerCase().includes('review')) && (
-                                   <span className="text-[10px] font-bold uppercase px-3 py-1 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 italic">
-                                     Follow-up
-                                   </span>
-                                 )}
-                               </div>
-                             </div>
-                            <div className="flex flex-wrap gap-x-6 gap-y-2">
-                              <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-                                <Calendar size={14} className="text-slate-300" />
-                                {format(new Date(appt.date), 'dd MMM yyyy')}
+                <div className="bg-white p-2 rounded-2xl border border-slate-200 w-fit flex gap-1 shadow-sm">
+                  <button 
+                    onClick={() => setSearchParams({ tab: 'appointments', filter: 'upcoming' })}
+                    className={`px-6 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
+                      (searchParams.get('filter') || 'upcoming') === 'upcoming' 
+                        ? 'bg-slate-900 text-white shadow-lg' 
+                        : 'text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    Upcoming
+                  </button>
+                  <button 
+                    onClick={() => setSearchParams({ tab: 'appointments', filter: 'past' })}
+                    className={`px-6 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
+                      searchParams.get('filter') === 'past' 
+                        ? 'bg-slate-900 text-white shadow-lg' 
+                        : 'text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    Past Visits
+                  </button>
+                </div>
+
+                {(() => {
+                  const filter = searchParams.get('filter') || 'upcoming';
+                  const filteredAppts = appointments.filter(a => 
+                    filter === 'upcoming' 
+                      ? (a.status === 'scheduled' || a.status === 'Scheduled' || a.status === 'in-progress')
+                      : (a.status === 'completed' || a.status === 'Completed' || a.status === 'cancelled' || a.status === 'Cancelled')
+                  );
+
+                  if (filteredAppts.length === 0) {
+                    return (
+                      <div className="bg-white p-12 lg:p-20 rounded-[3rem] border border-dashed border-slate-200 text-center">
+                        <Clock size={64} strokeWidth={1} className="mx-auto text-slate-300 mb-6" />
+                        <h5 className="font-bold text-slate-800 uppercase tracking-widest text-xs">No {filter} Consultations</h5>
+                        <p className="text-slate-400 text-xs mt-3 max-w-xs mx-auto font-medium leading-relaxed">
+                          {filter === 'upcoming' ? 'Your schedule is currently clear. Keeping up with regular clinical assessments ensures your health journey stays on the right track.' : 'No previous visit records found in your health vault.'}
+                        </p>
+                        {filter === 'upcoming' && (
+                          <button 
+                            onClick={() => setActiveTab('doctors')}
+                            className="mt-8 px-10 py-4 bg-emerald-500 text-white rounded-2xl text-[10px] font-bold hover:bg-emerald-600 transition-all active:scale-95 uppercase tracking-widest shadow-xl shadow-emerald-500/20"
+                          >
+                            Browse Specialists
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 gap-6">
+                      {filteredAppts.map((appt) => (
+                        <div key={appt.id} className="bg-white p-1 pr-6 rounded-[2.5rem] border border-slate-200 hover:border-emerald-200 transition-all flex flex-col sm:flex-row items-center justify-between gap-6 shadow-sm overflow-hidden group">
+                          <div className="flex items-center gap-6 w-full sm:w-auto">
+                            <div className={`w-24 h-24 sm:w-32 sm:h-32 rounded-[2rem] flex items-center justify-center shrink-0 relative overflow-hidden ${
+                              appt.type === 'Online' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'
+                            }`}>
+                              <div className="absolute inset-0 bg-white/40 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                              {appt.type === 'Online' ? <Video size={36} className="relative z-10" /> : <Home size={36} className="relative z-10" />}
+                            </div>
+                            <div className="flex-1 py-4 px-4 sm:px-0">
+                              <div className="flex flex-wrap items-center gap-3 mb-3">
+                                <h5 className="font-black text-slate-800 text-lg sm:text-xl tracking-tight leading-none">
+                                  {appt.type === 'Online' ? 'Video Telehealth' : 'In-Clinic Visit'}
+                                </h5>
+                                <span className={`text-[9px] font-black uppercase px-3 py-1 rounded-full shadow-sm ${
+                                  appt.status === 'Completed' ? 'bg-emerald-500 text-white' :
+                                  appt.status === 'Cancelled' ? 'bg-red-500 text-white' : 
+                                  appt.status === 'Scheduled' ? 'bg-amber-400 text-white' : 'bg-indigo-600 text-white'
+                                }`}>
+                                  {appt.status}
+                                </span>
                               </div>
-                              <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-                                <Clock size={14} className="text-slate-300" />
-                                {appt.time}
-                              </div>
-                              {appt.videoLink && (
-                                <div className="flex items-center gap-2 text-[10px] text-indigo-500 font-bold bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100">
-                                  <Video size={10} />
-                                  <a href={appt.videoLink} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                                    Room ID: {appt.videoLink.split('/').pop()?.substring(0, 10)}...
-                                  </a>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+                                <div className="space-y-1">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Session Details</p>
+                                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                                    <Calendar size={14} className="text-slate-300" />
+                                    {format(new Date(appt.date), 'EEEE, do MMM yyyy')}
+                                  </div>
                                 </div>
-                              )}
+                                <div className="space-y-1">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Consultation Time</p>
+                                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                                    <Clock size={14} className="text-slate-300" />
+                                    {appt.time}
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Practitioner</p>
+                                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                                    <div className="w-4 h-4 rounded-full bg-slate-100 flex items-center justify-center text-[8px] text-slate-400">Dr</div>
+                                    Dr. {appt.doctorName}
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex gap-3 w-full sm:w-auto">
-                           {appt.status === 'Completed' && !feedbacks.find(f => f.appointmentId === appt.id) && (
+
+                          <div className="flex flex-wrap sm:flex-nowrap gap-3 w-full sm:w-auto p-4 sm:p-0">
+                            {appt.status === 'Completed' && !feedbacks.find(f => f.appointmentId === appt.id) && (
                               <button 
                                 onClick={() => {
                                   setTargetAppointment(appt);
                                   setIsReviewing(true);
                                 }}
-                                className="flex-1 sm:flex-none px-6 py-4 bg-emerald-500 text-white rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-emerald-600 transition-all active:scale-95 shadow-lg shadow-emerald-500/10 flex items-center gap-2"
+                                className="flex-1 sm:flex-none px-6 py-4 bg-emerald-500 text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-600 transition-all active:scale-95 shadow-lg shadow-emerald-500/10 flex items-center gap-2"
                               >
-                                <Star size={16} fill="currentColor" />
-                                Share Feedback
+                                <Star size={14} fill="currentColor" />
+                                Review
                               </button>
-                           )}
-                           {appt.status === 'Scheduled' && (
+                            )}
+                            {appt.status === 'Scheduled' && (
                               <div className="flex gap-2">
                                 <button 
                                   onClick={() => {
@@ -1354,47 +1417,32 @@ export default function PatientPortal() {
                                     setIsRescheduling(true);
                                     setIsBooking(true);
                                   }}
-                                  className="flex-1 sm:flex-none px-6 py-4 bg-emerald-50 text-emerald-600 rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-emerald-100 transition-all active:scale-95"
+                                  className="flex-1 sm:flex-none px-6 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-xl shadow-slate-200"
                                 >
                                   Reschedule
                                 </button>
                                 <button 
                                   onClick={() => handleCancelAppointment(appt)}
-                                  className="flex-1 sm:flex-none px-6 py-4 bg-slate-50 text-slate-600 rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-red-50 hover:text-red-600 transition-all active:scale-95"
+                                  className="flex-1 sm:flex-none px-6 py-4 bg-red-50 text-red-600 rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-red-100 transition-all active:scale-95"
                                 >
                                   Cancel
                                 </button>
-                                <button 
-                                  onClick={() => {
-                                    setGrievanceData({
-                                      doctorId: appt.doctorId || '',
-                                      doctorName: appt.doctorName || '',
-                                      subject: `Report regarding appointment on ${appt.date}`,
-                                      description: '',
-                                      severity: 'warning'
-                                    });
-                                    setIsGrievanceOpen(true);
-                                  }}
-                                  className="p-4 bg-slate-50 text-slate-400 rounded-2xl hover:bg-red-50 hover:text-red-600 transition-all border border-slate-100"
-                                  title="Clinical Complaint"
-                                >
-                                  <AlertTriangle size={18} />
-                                </button>
                               </div>
-                           )}
-                           {appt.status === 'Scheduled' && appt.type === 'Online' && (
-                            <button 
-                              onClick={() => setActiveCall(appt)}
-                              className="flex-1 sm:flex-none px-6 py-4 bg-indigo-600 text-white rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-slate-900 transition-all active:scale-95 shadow-lg shadow-indigo-100"
-                            >
-                              Join Consult
-                            </button>
-                          )}
+                            )}
+                            {appt.status === 'Scheduled' && appt.type === 'Online' && (
+                              <button 
+                                onClick={() => setActiveCall(appt)}
+                                className="flex-1 sm:flex-none px-6 py-4 bg-indigo-600 text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 shadow-lg shadow-indigo-100"
+                              >
+                                Join Consult
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  );
+                })()}
               </motion.div>
             )}
 
@@ -1491,141 +1539,65 @@ export default function PatientPortal() {
             )}
             
             {currentTab === 'doctors' && (
-              <motion.div 
-                key="doctors"
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.98 }}
+              <DoctorDiscovery 
+                onSelect={(dr) => {
+                  setSelectedDoctor(dr);
+                  setIsBookingDoctor(true);
+                }} 
+              />
+            )}
+
+            {currentTab === 'reports' && (
+              <motion.div
+                key="reports"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                {/* Prominent Search Bar */}
-                <div className="relative group">
-                  <div className="absolute -inset-1 bg-gradient-to-r from-emerald-500 to-indigo-500 rounded-3xl sm:rounded-[2.5rem] blur opacity-20 group-hover:opacity-30 transition duration-1000 group-hover:duration-200"></div>
-                  <div className="relative bg-white p-1 sm:p-2 rounded-2xl sm:rounded-[2.2rem] border border-slate-200 shadow-2xl shadow-slate-200/50 flex items-center">
-                    <div className="pl-4 sm:pl-6 text-slate-400">
-                      <Search size={20} className="sm:size-6" strokeWidth={2.5} />
-                    </div>
-                    <input 
-                      type="text"
-                      placeholder="Search for doctors, specializations..."
-                      value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
-                      className="w-full pl-3 sm:pl-4 pr-4 sm:pr-6 py-4 sm:py-6 bg-transparent outline-none text-sm sm:text-lg font-bold text-slate-800 placeholder:text-slate-300"
-                    />
-                    <div className="hidden sm:flex items-center gap-2 pr-4">
-                      <div className="px-3 py-1 bg-slate-50 border border-slate-100 rounded-lg text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                        ⌘K
+                <div className="bg-slate-900 p-8 rounded-[3rem] text-white relative overflow-hidden">
+                   <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-[100px] -mr-32 -mt-32"></div>
+                   <div className="relative z-10">
+                      <div className="inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-400 px-4 py-2 rounded-full mb-6">
+                        <Sparkles size={16} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">AI Analyzed Reports</span>
                       </div>
-                    </div>
-                  </div>
+                      <h3 className="text-3xl font-bold mb-4">My Medical Reports</h3>
+                      <p className="text-slate-400 text-sm max-w-xl">View all your diagnostic reports, analyzed by our AI for better understanding. Your data is strictly private.</p>
+                   </div>
                 </div>
 
-                {/* Quick Specialization Filters */}
-                <div className="space-y-3 sm:space-y-4">
-                  <div className="flex items-center justify-between px-2">
-                    <h5 className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Quick Specialty Filter</h5>
-                    <div className="flex items-center gap-1 text-[8px] sm:text-[10px] font-bold text-emerald-600 uppercase tracking-widest cursor-pointer hover:underline" onClick={() => setSpecializationFilter('All')}>
-                      Clear
-                    </div>
+                {reports.length === 0 ? (
+                  <div className="bg-white p-20 rounded-[3rem] border border-dashed border-slate-200 text-center">
+                    <FileText size={48} className="mx-auto text-slate-200 mb-6" strokeWidth={1} />
+                    <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">No reports archived yet</p>
+                    <button className="mt-4 px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest">Upload Report</button>
                   </div>
-                  
-                  <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-4 no-scrollbar -mx-4 sm:-mx-2 px-4 sm:px-2 mask-linear-r">
-                    {specializations.map((spec) => (
-                      <motion.button
-                        key={spec}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={() => setSpecializationFilter(spec)}
-                        className={`px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-[9px] sm:text-[11px] font-bold uppercase tracking-widest whitespace-nowrap transition-all border shadow-sm ${
-                          specializationFilter === spec 
-                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-emerald-200' 
-                            : 'bg-white text-slate-500 border-slate-100 hover:border-emerald-200 hover:bg-emerald-50'
-                        }`}
-                      >
-                        {spec}
-                      </motion.button>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {reports.map((report) => (
+                      <div key={report.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm hover:shadow-xl transition-all group">
+                         <div className="flex items-center justify-between mb-6">
+                            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
+                               <FileText size={24} />
+                            </div>
+                            <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-3 py-1 rounded-lg uppercase tracking-widest">AI Analyzed</span>
+                         </div>
+                         <h4 className="text-lg font-bold text-slate-800 mb-2">{report.title || 'Diagnostic Report'}</h4>
+                         <p className="text-xs text-slate-500 mb-6">{format(new Date(report.createdAt), 'dd MMM yyyy')}</p>
+                         
+                         <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 mb-6">
+                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">AI Summary</p>
+                            <p className="text-xs font-medium text-slate-700 leading-relaxed line-clamp-3">{report.summary || 'Summary pending analysis...'}</p>
+                         </div>
+
+                         <button className="w-full py-4 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-600 transition-all">
+                            View Full Analysis
+                         </button>
+                      </div>
                     ))}
                   </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {filteredDoctors.map((dr) => (
-                    <motion.div 
-                      layout
-                      key={dr.uid}
-                      className="bg-white p-6 rounded-[2rem] border border-slate-200 hover:border-emerald-200 transition-all group relative overflow-hidden"
-                    >
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none group-hover:scale-150 transition-transform duration-1000"></div>
-                      
-                      <div className="flex items-start gap-6 relative z-10">
-                        <div className="w-16 h-16 lg:w-20 lg:h-20 bg-slate-100 rounded-3xl flex items-center justify-center text-slate-400 group-hover:bg-emerald-50 group-hover:text-emerald-500 transition-all shrink-0 border border-slate-200 group-hover:border-emerald-100 overflow-hidden">
-                          {dr.photoURL ? (
-                            <img src={dr.photoURL} alt={dr.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          ) : (
-                            <Stethoscope size={32} />
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h5 className="font-bold text-slate-800 text-lg">Dr. {dr.name}</h5>
-                            {dr.isVerified ? (
-                              <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full border border-emerald-100 ring-4 ring-emerald-50/50">
-                                <ShieldCheck size={12} className="fill-emerald-600/10" />
-                                <span className="text-[9px] font-black uppercase tracking-widest">Verified Expert</span>
-                              </div>
-                            ) : (
-                              <CheckCircle2 size={16} className="text-slate-300" />
-                            )}
-                          </div>
-                          <p className="text-emerald-600 font-bold text-xs uppercase tracking-widest mb-4">
-                            {dr.specialization || 'Homeopath Specialist'}
-                          </p>
-                          
-                          <div className="grid grid-cols-2 gap-4 mb-6 text-slate-600">
-                            <div className="space-y-1">
-                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Experience</span>
-                              <p className="text-sm font-bold">{dr.experience || '8'}+ Years</p>
-                            </div>
-                            <div className="space-y-1">
-                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Status</span>
-                              <p className="text-sm font-bold text-emerald-600 flex items-center gap-1.5 leading-none">
-                                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                                Available
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="flex gap-2">
-                             <button 
-                              onClick={() => {
-                                setSelectedDoctor(dr);
-                                setIsBooking(true);
-                              }}
-                              className="flex-1 py-4 bg-emerald-500 text-white rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-emerald-600 transition-all active:scale-95 shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
-                             >
-                               Book Visit <ArrowRight size={14} />
-                             </button>
-                             <button 
-                               onClick={() => {
-                                 setGrievanceData({
-                                   doctorId: dr.uid || '',
-                                   doctorName: dr.name || '',
-                                   subject: '',
-                                   description: '',
-                                   severity: 'info'
-                                 });
-                                 setIsGrievanceOpen(true);
-                               }}
-                               className="p-4 bg-slate-50 text-slate-400 rounded-2xl hover:bg-red-50 hover:text-red-600 transition-all border border-slate-100"
-                               title="Report Issue"
-                             >
-                               <AlertCircle size={18} />
-                             </button>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
+                )}
               </motion.div>
             )}
 
@@ -1905,8 +1877,9 @@ export default function PatientPortal() {
 
                 {patientData && (
                   <PatientBillingHistory 
-                    patient={patientData} 
-                    doctor={doctors.length > 0 ? doctors[0] : null} 
+                    invoices={invoices} 
+                    onDownload={(inv) => generateInvoicePDF(doctors.find(dr => dr.uid === inv.doctorId) || null, patientData, inv)} 
+                    onPaymentSuccess={handlePaymentSuccess}
                   />
                 )}
               </motion.div>
@@ -2016,6 +1989,23 @@ export default function PatientPortal() {
                 </div>
               </form>
             </motion.div>
+          </div>
+        )}
+
+        {isBookingDoctor && selectedDoctor && (
+          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+             <AppointmentBooking 
+               doctor={selectedDoctor as any} 
+               patient={patientData as any}
+               onSuccess={() => {
+                 setIsBookingDoctor(false);
+                 setSelectedDoctor(null);
+               }} 
+               onCancel={() => {
+                 setIsBookingDoctor(false);
+                 setSelectedDoctor(null);
+               }} 
+             />
           </div>
         )}
 

@@ -37,6 +37,9 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
     specialization: profile?.specialization || '',
     experience: profile?.experience || 0,
     qualification: profile?.qualification || '',
+    city: profile?.city || '',
+    area: profile?.area || '',
+    pincode: profile?.pincode || '',
     stateBoardRegistrationNumber: profile?.stateBoardRegistrationNumber || '',
     nchRegistrationNumber: profile?.nchRegistrationNumber || '',
     clinicName: profile?.clinicName || '',
@@ -56,6 +59,9 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
         specialization: profile.specialization || '',
         experience: profile.experience || 0,
         qualification: profile.qualification || '',
+        city: profile.city || '',
+        area: profile.area || '',
+        pincode: profile.pincode || '',
         stateBoardRegistrationNumber: profile.stateBoardRegistrationNumber || '',
         nchRegistrationNumber: profile.nchRegistrationNumber || '',
         clinicName: profile.clinicName || '',
@@ -105,6 +111,9 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
         specialization: formData.specialization,
         experience: Number(formData.experience),
         qualification: formData.qualification,
+        city: formData.city,
+        area: formData.area,
+        pincode: formData.pincode,
         stateBoardRegistrationNumber: formData.stateBoardRegistrationNumber,
         nchRegistrationNumber: formData.nchRegistrationNumber,
         clinicName: formData.clinicName,
@@ -254,6 +263,33 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
                     value={formData.qualification}
                     onChange={e => setFormData({ ...formData, qualification: e.target.value })}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">City / शहर</label>
+                  <input 
+                    type="text" 
+                    value={formData.city}
+                    onChange={e => setFormData({ ...formData, city: e.target.value })}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-bold"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Area / क्षेत्र</label>
+                  <input 
+                    type="text" 
+                    value={formData.area}
+                    onChange={e => setFormData({ ...formData, area: e.target.value })}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-bold"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Pincode / पिनकोड</label>
+                  <input 
+                    type="text" 
+                    value={formData.pincode}
+                    onChange={e => setFormData({ ...formData, pincode: e.target.value })}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-mono"
                   />
                 </div>
                 <div className="space-y-2">

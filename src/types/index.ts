@@ -47,10 +47,11 @@ export interface Appointment {
   date: string;
   time: string;
   type: "Online" | "Offline";
-  status: "Scheduled" | "Completed" | "Cancelled";
+  status: "Scheduled" | "Completed" | "Cancelled" | "scheduled" | "cancelled" | "completed" | "in-progress" | "payment-pending";
   reason?: string;
   hasVoiceNote?: boolean;
   videoLink?: string;
+  createdAt?: string;
 }
 
 export interface Medication {
@@ -116,6 +117,9 @@ export interface UserProfile {
   nchRegistrationNumber?: string;
   clinicName?: string;
   clinicAddress?: string;
+  city?: string;
+  area?: string;
+  pincode?: string;
   mobileNumber?: string;
   isMobileVerified?: boolean;
   isEmailVerified?: boolean;
