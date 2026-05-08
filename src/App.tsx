@@ -338,11 +338,11 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
               onClick={closeSidebar}
               className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
                 location.pathname === item.path 
-                  ? 'bg-emerald-50 text-emerald-700 shadow-sm' 
+                  ? 'bg-brand-50 text-brand-700 shadow-sm' 
                   : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
               }`}
             >
-              <item.icon size={20} className={location.pathname === item.path ? 'text-emerald-700' : 'text-slate-400'} />
+              <item.icon size={20} className={location.pathname === item.path ? 'text-brand-700' : 'text-slate-400'} />
               {item.name}
             </Link>
           ))}
@@ -351,7 +351,7 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
         <div className="p-4 border-t border-slate-100 bg-slate-50/50 text-center">
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
             <div className="flex flex-col items-center gap-3 mb-5">
-              <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 font-bold text-sm ring-4 ring-emerald-50 overflow-hidden">
+              <div className="w-12 h-12 rounded-full bg-brand-100 flex items-center justify-center text-brand-600 font-bold text-sm ring-4 ring-brand-50 overflow-hidden">
                 {profile?.photoURL ? (
                   <img src={profile.photoURL} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
@@ -362,7 +362,7 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
                 <p className="text-sm font-bold text-slate-900 truncate">
                   {profile?.role === 'doctor' ? `Dr. ${profile?.name || 'Doctor'}` : profile?.name || 'Patient'}
                 </p>
-                <p className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest mt-1">
+                <p className="text-[9px] font-bold text-brand-500 uppercase tracking-widest mt-1">
                   {profile?.role === 'doctor' ? 'Clinical Expert' : 'Wellness Member'}
                 </p>
               </div>
@@ -397,7 +397,7 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
                 <button 
                   key={lang.code}
                   onClick={() => setLanguage(lang.code as any)}
-                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all tap-target ${language === lang.code ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all tap-target ${language === lang.code ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                 >
                   {lang.label}
                 </button>
@@ -405,11 +405,11 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
             </div>
 
             <button 
-              className="relative p-2 text-slate-400 hover:text-emerald-600 transition-colors tap-target"
+              className="relative p-2 text-slate-400 hover:text-brand-600 transition-colors tap-target"
               onClick={() => setShowNotifications(!showNotifications)}
             >
               <Bell size={22} />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-emerald-500 rounded-full border-2 border-white"></span>
+              <span className="absolute top-2 right-2 w-2 h-2 bg-brand-500 rounded-full border-2 border-white"></span>
             </button>
             <div className="w-px h-8 bg-slate-100"></div>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active Presence</p>
@@ -438,7 +438,7 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
              </button>
              <button 
                 onClick={() => setIsSidebarOpen(true)}
-                className="p-3 bg-emerald-50 text-emerald-600 rounded-xl active:scale-95 transition-transform tap-target"
+                className="p-3 bg-brand-50 text-brand-600 rounded-xl active:scale-95 transition-transform tap-target"
              >
                 <Menu size={24} />
              </button>
@@ -464,7 +464,7 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
                 <h2 className="text-2xl font-bold text-slate-900 leading-tight">
                   {navItems.find(i => i.path === location.pathname)?.name || 'Dashboard'}
                 </h2>
-                <div className="w-12 h-1 bg-emerald-600 rounded-full mt-2"></div>
+                <div className="w-12 h-1 bg-brand-600 rounded-full mt-2"></div>
               </div>
               {children}
             </motion.div>
@@ -478,7 +478,7 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.8, y: 20 }}
                 onClick={scrollToTop}
-                className="fixed bottom-20 lg:bottom-10 right-6 lg:right-10 w-12 h-12 bg-emerald-600 text-white rounded-full shadow-xl shadow-emerald-200 flex items-center justify-center z-50 hover:bg-slate-900 transition-all active:scale-90 border-4 border-white"
+                className="fixed bottom-24 lg:bottom-10 right-6 lg:right-10 w-12 h-12 bg-brand-600 text-white rounded-full shadow-xl shadow-brand-200 flex items-center justify-center z-50 hover:bg-slate-900 transition-all active:scale-90 border-4 border-white"
               >
                 <ArrowUp size={24} strokeWidth={2.5} />
               </motion.button>
@@ -494,14 +494,14 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
               icon={LayoutDashboard} 
               label="Dash" 
               active={location.pathname === '/dashboard'} 
-              activeColor="text-emerald-600"
+              activeColor="text-brand-600"
             />
             <MobileNavItem 
               to="/patients" 
               icon={Users} 
               label="Patients" 
               active={location.pathname === '/patients'} 
-              activeColor="text-emerald-600"
+              activeColor="text-brand-600"
             />
             <div className="relative -mt-10">
               <button 
@@ -516,14 +516,14 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
               icon={Calendar} 
               label="Visits" 
               active={location.pathname === '/appointments'} 
-              activeColor="text-emerald-600"
+              activeColor="text-brand-600"
             />
             <MobileNavItem 
               to="/settings" 
               icon={Settings} 
               label="Settings" 
               active={location.pathname === '/settings'} 
-              activeColor="text-emerald-600"
+              activeColor="text-brand-600"
             />
           </div>
         )}
@@ -535,19 +535,19 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
               icon={Home} 
               label="Home" 
               active={location.pathname === '/portal' && (!location.search.includes('tab=') || location.search.includes('tab=overview'))} 
-              activeColor="text-emerald-600"
+              activeColor="text-brand-600"
             />
             <MobileNavItem 
               to="/portal?tab=prescriptions" 
               icon={FileText} 
               label="Meds" 
               active={location.search.includes('tab=prescriptions')} 
-              activeColor="text-emerald-600"
+              activeColor="text-brand-600"
             />
             <div className="relative -mt-10">
               <Link 
                 to="/portal?tab=doctors"
-                className="w-14 h-14 bg-emerald-600 text-white rounded-full flex items-center justify-center shadow-xl shadow-emerald-200 border-4 border-white active:scale-90 transition-transform"
+                className="w-14 h-14 bg-brand-600 text-white rounded-full flex items-center justify-center shadow-xl shadow-brand-200 border-4 border-white active:scale-90 transition-transform"
               >
                 <Plus size={24} />
               </Link>
@@ -557,14 +557,14 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
               icon={Calendar} 
               label="Visits" 
               active={location.search.includes('tab=appointments')} 
-              activeColor="text-emerald-600"
+              activeColor="text-brand-600"
             />
             <MobileNavItem 
               to="/portal?tab=profile" 
               icon={UserIcon} 
               label="Account" 
               active={location.search.includes('tab=profile')} 
-              activeColor="text-emerald-600"
+              activeColor="text-brand-600"
             />
           </div>
         )}

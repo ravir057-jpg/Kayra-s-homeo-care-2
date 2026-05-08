@@ -81,6 +81,8 @@ export default function AppointmentManager() {
       const docRef = await addDoc(collection(db, path), {
         ...formData,
         patientName: patient?.name || 'Unknown',
+        patientUid: patient?.uid || '',
+        doctorId: auth.currentUser?.uid || '',
         videoLink
       });
       await logAction({
@@ -162,6 +164,7 @@ export default function AppointmentManager() {
           try {
             await addDoc(collection(db, 'invoices'), {
               patientId: appt.patientId,
+              patientUid: appt.patientUid || '',
               doctorId: user?.uid,
               appointmentId: id,
               amount: fee,

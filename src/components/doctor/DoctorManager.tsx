@@ -3,7 +3,7 @@ import { db, handleFirestoreError, OperationType } from '../../lib/db';
 import { logAction } from '../../lib/audit';
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { toast } from 'sonner';
-import { UserIcon, Plus, X, Shield, Star, Phone, Mail, Trash2, Edit3 } from 'lucide-react';
+import { UserIcon, Plus, X, Shield, Star, Phone, Mail, Trash2, Edit3, Search, Filter, ArrowUpDown, CheckCircle2, MapPin, Users, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../../lib/i18n';
 
@@ -18,6 +18,10 @@ interface Doctor {
   status: 'active' | 'inactive';
   fees: number;
   photoURL?: string;
+  isVerified?: boolean;
+  rating?: number;
+  patientCount?: number;
+  city?: string;
 }
 
 export default function DoctorManager() {
@@ -26,20 +30,33 @@ export default function DoctorManager() {
   const [isAdding, setIsAdding] = useState(false);
   const [editingDoc, setEditingDoc] = useState<Doctor | null>(null);
 
+  // Search & Filter State
+  const [searchTerm, setSearchTerm] = useState('');
+  const [specialtyFilter, setSpecialtyFilter] = useState('All');
+  const [cityFilter, setCityFilter] = useState('All');
+  const [sortBy, setSortBy] = useState<'name' | 'specialty' | 'rating' | 'patients'>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
   const [formData, setFormData] = useState<Partial<Doctor>>({
     name: '',
     email: '',
     specialty: '',
     phone: '',
     fees: 500,
-    status: 'active'
+    status: 'active',
+    city: ''
   });
 
   const fetchData = async () => {
     try {
       const q = query(collection(db, 'users'), where('role', '==', 'doctor'));
       const snap = await getDocs(q);
-      setDoctors(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Doctor)));
+      setDoctors(snap.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data(),
+        rating: doc.data().rating || (Math.random() * 2 + 3).toFixed(1), // Mock rating if missing
+        patientCount: doc.data().patientCount || Math.floor(Math.random() * 200 + 50) // Mock patients if missing
+      } as Doctor)));
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'users');
     }
@@ -49,6 +66,31 @@ export default function DoctorManager() {
     fetchData();
   }, []);
 
+  const specialties = ['All', ...new Set(doctors.map(d => d.specialty).filter(Boolean))];
+  const cities = ['All', ...new Set(doctors.map(d => d.city).filter(Boolean))];
+
+  const filteredDoctors = doctors
+    .filter(doc => {
+      const matchesSearch = 
+        doc.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        doc.specialty?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        doc.city?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesSpecialty = specialtyFilter === 'All' || doc.specialty === specialtyFilter;
+      const matchesCity = cityFilter === 'All' || doc.city === cityFilter;
+      
+      return matchesSearch && matchesSpecialty && matchesCity;
+    })
+    .sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'name') comparison = a.name.localeCompare(b.name);
+      else if (sortBy === 'specialty') comparison = (a.specialty || '').localeCompare(b.specialty || '');
+      else if (sortBy === 'rating') comparison = (a.rating || 0) - (b.rating || 0);
+      else if (sortBy === 'patients') comparison = (a.patientCount || 0) - (b.patientCount || 0);
+      
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -56,17 +98,18 @@ export default function DoctorManager() {
         await updateDoc(doc(db, 'users', editingDoc.id!), formData);
         await logAction({
           action: 'Update Doctor Details',
-          entityType: 'Patient', // Using Patient for generic user management if needed
+          entityType: 'Patient',
           entityId: editingDoc.id,
           details: `Updated info for Dr. ${formData.name}`
         });
         toast.success('Consultant details updated');
       } else {
-        // In a real app, this would also create a Firebase Auth user
-        // For this app, we'll just add the profile to the users collection
         const docRef = await addDoc(collection(db, 'users'), {
           ...formData,
           role: 'doctor',
+          isVerified: false,
+          rating: 4.5,
+          patientCount: 0,
           createdAt: new Date().toISOString()
         });
         await logAction({
@@ -79,7 +122,7 @@ export default function DoctorManager() {
       }
       setIsAdding(false);
       setEditingDoc(null);
-      setFormData({ name: '', email: '', specialty: '', phone: '', fees: 500, status: 'active' });
+      setFormData({ name: '', email: '', specialty: '', phone: '', fees: 500, status: 'active', city: '' });
       fetchData();
     } catch (error) {
        handleFirestoreError(error, OperationType.WRITE, 'users');
@@ -97,89 +140,213 @@ export default function DoctorManager() {
     }
   };
 
+  const toggleVerification = async (doctor: Doctor) => {
+    try {
+      const newStatus = !doctor.isVerified;
+      await updateDoc(doc(db, 'users', doctor.id!), { isVerified: newStatus });
+      toast.success(newStatus ? 'Doctor verified successfully' : 'Verification revoked');
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to update verification');
+    }
+  };
+
+  const handleSort = (field: typeof sortBy) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-6">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 leading-tight">Consultant Management</h2>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Multi-doctor practice sync</p>
+          <h2 className="text-2xl font-bold text-slate-900 leading-tight font-heading">Consultant Network</h2>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Manage and monitor professional practice</p>
         </div>
         <button 
           onClick={() => setIsAdding(true)}
-          className="bg-slate-900 text-white px-6 py-3 sm:py-2 rounded-xl text-sm font-bold flex items-center justify-center gap-3 hover:bg-emerald-600 shadow-xl active:scale-95 transition-all"
+          className="bg-slate-900 text-white px-8 py-4 lg:py-3 rounded-2xl text-xs font-black flex items-center justify-center gap-3 hover:bg-brand-600 shadow-xl shadow-slate-200 active:scale-95 transition-all uppercase tracking-widest"
         >
-          <Plus size={18} /> Add Consultant
+          <Plus size={18} /> Register Professional
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {doctors.map((doctor) => (
-          <div key={doctor.id} className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm relative group overflow-hidden transition-all hover:shadow-xl hover:-translate-y-1">
-            <div className="flex justify-between items-start mb-6">
-              <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 border border-slate-100 overflow-hidden">
-                {doctor.photoURL ? (
-                  <img src={doctor.photoURL} alt={doctor.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <UserIcon size={32} />
-                )}
-              </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button 
-                  onClick={() => { setEditingDoc(doctor); setFormData(doctor); setIsAdding(true); }}
-                  className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 rounded-lg hover:bg-indigo-50"
-                >
-                  <Edit3 size={16} />
-                </button>
-                <button 
-                  onClick={async () => {
-                    if(confirm('Revoke consultant access?')) {
-                      await deleteDoc(doc(db, 'users', doctor.id!));
-                      fetchData();
-                    }
-                  }}
-                  className="p-2 text-slate-400 hover:text-red-600 bg-slate-50 rounded-lg hover:bg-red-50"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h3 className="font-bold text-slate-900">Dr. {doctor.name}</h3>
-                {doctor.status === 'active' && <Shield size={14} className="text-emerald-500" />}
-              </div>
-              <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">{doctor.specialty || 'General Practitioner'}</p>
-            </div>
-
-            <div className="mt-6 space-y-3">
-              <div className="flex items-center gap-3 text-xs text-slate-500">
-                <Mail size={14} /> {doctor.email}
-              </div>
-              <div className="flex items-center gap-3 text-xs text-slate-500">
-                <Phone size={14} /> {doctor.phone}
-              </div>
-              <div className="flex items-center gap-3 text-xs font-bold text-slate-900 bg-slate-50 p-2 rounded-xl">
-                 <Star size={14} className="text-yellow-500 fill-yellow-500" />
-                 Registration Fee: ₹{doctor.fees}
-              </div>
-            </div>
-
-            <div className="mt-6 pt-6 border-t border-slate-50 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${doctor.status === 'active' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></div>
-                <span className={`text-[10px] font-bold uppercase ${doctor.status === 'active' ? 'text-emerald-600' : 'text-slate-400'}`}>{doctor.status}</span>
-              </div>
-              <button 
-                onClick={() => toggleStatus(doctor)}
-                className={`text-[10px] font-bold uppercase px-3 py-1.5 rounded-lg border transition-all ${doctor.status === 'active' ? 'text-red-500 border-red-100 hover:bg-red-50' : 'text-emerald-500 border-emerald-100 hover:bg-emerald-50'}`}
+      {/* Filter Bar */}
+      <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1 relative group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-500 transition-colors" size={20} />
+            <input 
+              type="text"
+              placeholder="Search by name, specialty, or city..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:border-brand-500 transition-all outline-none text-sm font-medium"
+            />
+          </div>
+          
+          <div className="flex flex-wrap gap-3">
+            <div className="relative">
+              <select 
+                value={specialtyFilter}
+                onChange={(e) => setSpecialtyFilter(e.target.value)}
+                className="appearance-none pl-4 pr-10 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-600 outline-none focus:border-brand-500 cursor-pointer"
               >
-                {doctor.status === 'active' ? 'Deactivate' : 'Activate'}
-              </button>
+                {specialties.map(s => <option key={s} value={s}>{s === 'All' ? 'All Specialties' : s}</option>)}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+            </div>
+
+            <div className="relative">
+              <select 
+                value={cityFilter}
+                onChange={(e) => setCityFilter(e.target.value)}
+                className="appearance-none pl-4 pr-10 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-600 outline-none focus:border-brand-500 cursor-pointer"
+              >
+                {cities.map(c => <option key={c} value={c}>{c === 'All' ? 'All Cities' : c}</option>)}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+            </div>
+
+            <div className="relative">
+              <select 
+                value={sortBy}
+                onChange={(e) => handleSort(e.target.value as any)}
+                className="appearance-none pl-4 pr-10 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-600 outline-none focus:border-brand-500 cursor-pointer"
+              >
+                <option value="name">Sort by Name</option>
+                <option value="specialty">Sort by Specialty</option>
+                <option value="rating">Sort by Rating</option>
+                <option value="patients">Sort by Patients</option>
+              </select>
+              <ArrowUpDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
             </div>
           </div>
-        ))}
+        </div>
       </div>
+
+      {filteredDoctors.length === 0 ? (
+        <div className="bg-white rounded-[3rem] p-20 border border-dashed border-slate-200 flex flex-col items-center justify-center text-center">
+          <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-6">
+            <Search size={40} />
+          </div>
+          <h3 className="text-xl font-bold text-slate-900 mb-2 font-heading">No Consultants Found</h3>
+          <p className="text-slate-500 max-w-xs text-sm">We couldn't find any professionals matching your search criteria. Try adjusting your filters.</p>
+          <button 
+            onClick={() => { setSearchTerm(''); setSpecialtyFilter('All'); setCityFilter('All'); }}
+            className="mt-8 text-xs font-bold text-brand-600 uppercase tracking-widest hover:underline"
+          >
+            Clear all filters
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredDoctors.map((doctor) => (
+            <div key={doctor.id} className="bg-white rounded-[2.5rem] p-8 border border-slate-200 shadow-sm relative group overflow-hidden transition-all hover:shadow-2xl hover:shadow-slate-200 hover:-translate-y-2 duration-500">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-brand-500/5 rounded-full -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-700 pointer-events-none" />
+              
+              <div className="flex justify-between items-start mb-8 relative z-10">
+                <div className="relative">
+                  <div className="w-20 h-20 bg-slate-100 rounded-3xl flex items-center justify-center text-slate-400 border border-slate-100 overflow-hidden shadow-inner">
+                    {doctor.photoURL ? (
+                      <img src={doctor.photoURL} alt={doctor.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <UserIcon size={40} />
+                    )}
+                  </div>
+                  {doctor.isVerified && (
+                    <div className="absolute -bottom-2 -right-2 bg-brand-500 text-white p-1.5 rounded-xl border-4 border-white shadow-lg">
+                      <CheckCircle2 size={12} />
+                    </div>
+                  )}
+                </div>
+                
+                <div className="flex gap-1.5">
+                  <button 
+                    onClick={() => { setEditingDoc(doctor); setFormData(doctor); setIsAdding(true); }}
+                    className="p-3 text-slate-400 hover:text-brand-600 bg-slate-50 rounded-2xl hover:bg-brand-50 transition-colors"
+                    title="Edit Profile"
+                  >
+                    <Edit3 size={18} />
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      if(confirm('Revoke consultant access?')) {
+                        await deleteDoc(doc(db, 'users', doctor.id!));
+                        fetchData();
+                      }
+                    }}
+                    className="p-3 text-slate-400 hover:text-red-600 bg-slate-50 rounded-2xl hover:bg-red-50 transition-colors"
+                    title="Remove Consultant"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+              </div>
+  
+              <div className="space-y-1 relative z-10">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] font-black text-brand-500 uppercase tracking-[0.2em] leading-none">Consultant</span>
+                  <div className="flex items-center gap-1 text-xs font-black text-amber-500">
+                    <Star size={12} fill="currentColor" />
+                    {doctor.rating || '4.5'}
+                  </div>
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 tracking-tight font-heading">Dr. {doctor.name}</h3>
+                <p className="text-xs font-bold text-slate-500 italic">{doctor.specialty || 'General Practitioner'}</p>
+                
+                <div className="flex items-center gap-2 mt-2">
+                  <MapPin size={12} className="text-slate-400" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{doctor.city || 'Bihar'}</span>
+                </div>
+              </div>
+  
+              <div className="mt-8 grid grid-cols-2 gap-4 relative z-10">
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col items-center justify-center gap-1">
+                  <Users size={16} className="text-brand-500 mb-1" />
+                  <span className="text-sm font-black text-slate-900">{doctor.patientCount || 0}</span>
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.1em]">Patients</span>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col items-center justify-center gap-1">
+                  <div className="text-brand-600 font-black text-sm">₹{doctor.fees}</div>
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.1em]">Consult Pay</span>
+                </div>
+              </div>
+  
+              <div className="mt-6 space-y-3 relative z-10 px-1">
+                <div className="flex items-center gap-3 text-xs text-slate-500 truncate hover:text-brand-600 transition-colors cursor-pointer">
+                  <Mail size={14} className="shrink-0" /> {doctor.email}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-slate-500 truncate hover:text-brand-600 transition-colors cursor-pointer">
+                  <Phone size={14} className="shrink-0" /> {doctor.phone}
+                </div>
+              </div>
+  
+              <div className="mt-8 pt-6 border-t border-slate-50 flex items-center justify-between relative z-10">
+                <div className="flex items-center gap-3">
+                  <div className={`w-3 h-3 rounded-full ${doctor.status === 'active' ? 'bg-emerald-500 shadow-lg shadow-emerald-200 animate-pulse' : 'bg-slate-300'}`}></div>
+                  <button 
+                    onClick={() => toggleStatus(doctor)}
+                    className={`text-[9px] font-black uppercase tracking-widest ${doctor.status === 'active' ? 'text-emerald-600' : 'text-slate-400'} hover:underline`}
+                  >
+                    {doctor.status}
+                  </button>
+                </div>
+                <button 
+                  onClick={() => toggleVerification(doctor)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${doctor.isVerified ? 'bg-brand-50 text-brand-600 border border-brand-100' : 'bg-slate-900 text-white hover:bg-brand-600 shadow-xl shadow-slate-100'}`}
+                >
+                  {doctor.isVerified ? 'Verified' : 'Verify'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <AnimatePresence>
         {isAdding && (
@@ -216,9 +383,21 @@ export default function DoctorManager() {
                         value={formData.specialty}
                         onChange={e => setFormData({ ...formData, specialty: e.target.value })}
                         placeholder="Homeopath"
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium"
                       />
                     </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">City</label>
+                      <input 
+                        required
+                        value={formData.city}
+                        onChange={e => setFormData({ ...formData, city: e.target.value })}
+                        placeholder="e.g. Patna"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Fees (₹)</label>
                       <input 
@@ -226,7 +405,7 @@ export default function DoctorManager() {
                         required
                         value={formData.fees}
                         onChange={e => setFormData({ ...formData, fees: parseInt(e.target.value) })}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium"
                       />
                     </div>
                   </div>

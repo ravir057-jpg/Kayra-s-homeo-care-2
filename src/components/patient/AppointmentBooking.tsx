@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Calendar as CalendarIcon, 
@@ -18,7 +18,7 @@ import {
   Zap
 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
-import { collection, addDoc, serverTimestamp, setDoc, doc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, setDoc, doc, query, where, getDocs } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { format, addDays, startOfDay } from 'date-fns';
 import { Patient, UserProfile, Appointment } from '../../types';
@@ -35,18 +35,47 @@ export default function AppointmentBooking({ doctor, patient, onSuccess, onCance
   const [loading, setLoading] = useState(false);
   const [bookingData, setBookingData] = useState({
     date: format(new Date(), 'yyyy-MM-dd'),
-    time: '10:00',
+    time: '',
     type: 'Offline' as 'Online' | 'Offline',
     reason: '',
     paymentMethod: 'Cash' as 'Online' | 'Cash'
   });
+  const [bookedSlots, setBookedSlots] = useState<string[]>([]);
+  const [isFetchingSlots, setIsFetchingSlots] = useState(false);
 
-  const availableSlots = [
+  const ALL_SLOTS = [
     '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', 
     '16:00', '16:30', '17:00', '17:30', '18:00', '18:30'
   ];
 
+  useEffect(() => {
+    fetchBookedSlots();
+  }, [bookingData.date]);
+
+  const fetchBookedSlots = async () => {
+    setIsFetchingSlots(true);
+    try {
+      const q = query(
+        collection(db, 'appointments'),
+        where('doctorId', '==', doctor.uid),
+        where('date', '==', bookingData.date),
+        where('status', 'in', ['Scheduled', 'Confirmed', 'payment-pending'])
+      );
+      const querySnapshot = await getDocs(q);
+      const slots = querySnapshot.docs.map(doc => doc.data().time);
+      setBookedSlots(slots);
+    } catch (error) {
+      console.error("Error fetching slots:", error);
+    } finally {
+      setIsFetchingSlots(false);
+    }
+  };
+
   const handleBooking = async () => {
+    if (!bookingData.time) {
+      toast.error('Please select a time slot');
+      return;
+    }
     setLoading(true);
     try {
       const apptData: Omit<Appointment, 'id'> = {
@@ -80,14 +109,11 @@ export default function AppointmentBooking({ doctor, patient, onSuccess, onCance
 
       toast.success('Appointment Sync Successful');
       
-      // WhatsApp Simulation
-      const message = `Hello Dr. ${doctor.name}, I have just booked a ${bookingData.type} appointment for ${bookingData.date} at ${bookingData.time}. My KHC-ID is ${patient.patientId}. - Sent via Kayra Holistic`;
-      const waUrl = `https://wa.me/${doctor.mobileNumber || '919876543210'}?text=${encodeURIComponent(message)}`;
+      // WhatsApp Integration
+      const message = `Namaste Dr. ${doctor.name}, I've booked a ${bookingData.type} appointment for ${bookingData.date} at ${bookingData.time}. Reason: ${bookingData.reason || 'General Checkup'}. [KHC-ID: KHC-${patient.id?.substring(0,6).toUpperCase()}]`;
+      const waUrl = `https://wa.me/${doctor.mobileNumber || '919153000000'}?text=${encodeURIComponent(message)}`;
       
-      if (window.confirm('Would you like to send a confirmation to the doctor on WhatsApp?')) {
-        window.open(waUrl, '_blank');
-      }
-
+      window.open(waUrl, '_blank');
       onSuccess();
     } catch (error) {
        handleFirestoreError(error, OperationType.CREATE, 'appointments');
@@ -185,15 +211,25 @@ export default function AppointmentBooking({ doctor, patient, onSuccess, onCance
 
                   {/* Slots Grid */}
                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                    {availableSlots.map(slot => (
-                      <button
-                        key={slot}
-                        onClick={() => setBookingData({...bookingData, time: slot})}
-                        className={`py-3 rounded-xl text-xs font-black transition-all ${bookingData.time === slot ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-100' : 'bg-slate-50 text-slate-400 hover:text-slate-600 border border-slate-100'}`}
-                      >
-                        {slot}
-                      </button>
-                    ))}
+                    {ALL_SLOTS.map(slot => {
+                      const isBooked = bookedSlots.includes(slot);
+                      return (
+                        <button
+                          key={slot}
+                          disabled={isBooked}
+                          onClick={() => setBookingData({...bookingData, time: slot})}
+                          className={`py-3 rounded-xl text-xs font-black transition-all ${
+                            isBooked 
+                              ? 'bg-slate-100 text-slate-300 cursor-not-allowed border-dashed border-slate-200' 
+                              : bookingData.time === slot 
+                                ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-100 border-emerald-500' 
+                                : 'bg-slate-50 text-slate-400 hover:text-slate-600 border border-slate-100'}`}
+                        >
+                          {slot}
+                          {isBooked && <span className="block text-[8px] opacity-50 uppercase tracking-tighter">Reserved</span>}
+                        </button>
+                      );
+                    })}
                   </div>
 
                   <div className="flex gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">

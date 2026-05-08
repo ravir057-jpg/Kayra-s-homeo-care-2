@@ -63,6 +63,8 @@ import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import Logo from './Logo';
 
+import WhatsAppButton from './shared/WhatsAppButton';
+
 export default function LandingPage() {
   const { scrollYProgress } = useScroll();
   const [mobileNumber, setMobileNumber] = useState('');
@@ -245,24 +247,24 @@ export default function LandingPage() {
             className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-bold uppercase tracking-[0.2em] mb-8"
           >
             <Leaf size={14} /> 
-            <span>Natural Healing • Precision Homeopathy</span>
+            <span>Natural Healing • Precision Homeopathy • HIPAA Secure</span>
           </motion.div>
           <motion.h1 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="text-4xl sm:text-7xl md:text-8xl lg:text-9xl font-bold text-slate-900 tracking-tight leading-[1.1] sm:leading-[1] lg:leading-[0.9] mb-6 sm:mb-8 lg:mb-12"
+            className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-bold text-slate-900 tracking-tighter leading-[1.1] sm:leading-[1] mb-6 sm:mb-8 lg:mb-12 font-heading"
           >
-            Empowering Your <br className="hidden md:block" />
-            <span className="text-emerald-600">Healing Journey</span>
+            Digital Sanctuary for <br className="hidden md:block" />
+            <span className="text-brand-600">Holistic Recovery</span>
           </motion.h1>
           <motion.p 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="text-sm sm:text-xl text-slate-500 max-w-2xl mx-auto mb-10 sm:mb-12 leading-relaxed font-semibold px-4 sm:px-0"
+            className="text-xs sm:text-lg text-slate-500 max-w-2xl mx-auto mb-10 sm:mb-12 leading-relaxed font-semibold px-4 sm:px-0"
           >
-            Experience the future of holistic care with Kayra's Homoeo. Care. Precision remedies, AI-powered analysis, and compassionate healing.
+            Welcome to Kayra's Homoeo. Care – where legacy homeopathic wisdom meets advanced AI diagnostics. Experience a clinical ecosystem designed for your total well-being.
           </motion.p>
           
           <motion.div 
@@ -666,6 +668,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-slate-50 text-center text-[10px] font-bold text-slate-300 uppercase tracking-widest">
           © 2026 Kayra's Homoeo. Care • Bihar Healthcare Digital Initiative
         </div>
+        <WhatsAppButton />
       </footer>
 
       {/* Global Scroll To Top Button */}

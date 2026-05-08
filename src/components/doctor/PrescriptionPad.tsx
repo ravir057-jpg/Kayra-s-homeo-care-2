@@ -161,6 +161,7 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
         try {
           await addDoc(collection(db, 'invoices'), {
             patientId: selectedPatientId,
+            patientUid: selectedPatient?.uid,
             doctorId: profile?.uid,
             amount: profile?.consultationFee || 500,
             status: 'Pending',

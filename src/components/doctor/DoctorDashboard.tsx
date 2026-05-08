@@ -146,73 +146,71 @@ export default function DoctorDashboard() {
   if (loading) return <div className="h-96 flex items-center justify-center">Syncing Practice Dashboard...</div>;
 
   return (
-    <div className="space-y-6 sm:space-y-8">
+    <div className="space-y-4 sm:space-y-8 pb-20 lg:pb-0">
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-4 lg:gap-6">
         <StatCard 
           title={t('total_patients')} 
           value={stats.patients.toLocaleString()} 
-          change={`${stats.patientsChange >= 0 ? '+' : ''}${stats.patientsChange}% new entries`} 
+          change={`${stats.patientsChange >= 0 ? '+' : ''}${stats.patientsChange}%`} 
           icon={Users}
           trend={stats.patientsChange >= 0 ? "up" : "down"}
-          color="emerald"
+          color="brand"
         />
         <StatCard 
           title={t('revenue')} 
           value={`₹${stats.revenue.toLocaleString()}`} 
-          change={`${stats.revenueChange >= 0 ? '+' : ''}${stats.revenueChange}% vs last month`} 
+          change={`${stats.revenueChange >= 0 ? '+' : ''}${stats.revenueChange}%`} 
           icon={IndianRupee}
           trend={stats.revenueChange >= 0 ? "up" : "down"}
-          color="emerald"
+          color="brand"
         />
         <StatCard 
-          title={t('low_stock')} 
-          value={stats.lowStock.toString()} 
-          change={`${stats.lowStock} alerts active`} 
-          icon={AlertTriangle}
-          trend={stats.lowStock > 0 ? "down" : "neutral"}
-          color="red"
-        />
-        <StatCard 
-          title="Monthly Visits" 
+          title="Visits" 
           value={stats.appointments.toString()} 
-          change={`${stats.appointmentsChange >= 0 ? '+' : ''}${stats.appointmentsChange}% growth`} 
+          change={`${stats.appointmentsChange >= 0 ? '+' : ''}${stats.appointmentsChange}%`} 
           icon={Calendar}
           trend={stats.appointmentsChange >= 0 ? "up" : "down"}
           color="blue"
         />
         <StatCard 
+          title="Stock" 
+          value={stats.lowStock.toString()} 
+          change={`${stats.lowStock} alerts`} 
+          icon={AlertTriangle}
+          trend={stats.lowStock > 0 ? "down" : "neutral"}
+          color="red"
+        />
+        <StatCard 
           title="Rating" 
-          value={stats.rating > 0 ? stats.rating.toString() : 'N/A'} 
-          change={`${stats.reviewCount} total reviews`} 
+          value={stats.rating > 0 ? stats.rating.toString() : '5.0'} 
+          change={`${stats.reviewCount} reviews`} 
           icon={Award}
           trend={stats.rating >= 4.5 ? 'up' : 'neutral'}
           color="amber"
-          className="col-span-1"
+          className="col-span-2 lg:col-span-1"
         />
       </div>
 
       {/* Quick Actions */}
-      <div className="flex flex-col sm:flex-row gap-4 items-center bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-        <div className="flex-1">
-          <h3 className="text-lg font-bold text-slate-800">Quick Clinical Actions</h3>
-          <p className="text-xs text-slate-500 font-medium tracking-tight">Streamline your daily workflow with one-click access</p>
+      <div className="flex flex-col lg:flex-row gap-4 items-center bg-white p-5 sm:p-6 rounded-3xl border border-slate-200 shadow-sm">
+        <div className="flex-1 w-full">
+          <h3 className="text-lg font-bold text-slate-800">Practice Hub</h3>
+          <p className="text-xs text-slate-500 font-medium tracking-tight">Streamline your daily clinical flow</p>
         </div>
-        <div className="flex flex-wrap gap-3 w-full sm:w-auto">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 w-full lg:w-auto">
           <button 
             onClick={() => navigate('/video')}
-            className="flex-1 sm:flex-none flex items-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-xl active:scale-95 group"
+            className="flex items-center gap-2 sm:gap-3 px-4 sm:px-8 py-3.5 sm:py-4 bg-slate-900 text-white rounded-xl sm:rounded-2xl text-[10px] sm:text-[11px] font-bold uppercase tracking-widest hover:bg-brand-600 transition-all shadow-xl active:scale-95 group justify-center sm:justify-start"
           >
-            <div className="shrink-0 w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center group-hover:bg-white/20 transition-colors">
-              <Video size={18} />
-            </div>
-            Start Video Call
+            <Video size={16} className="sm:size-4.5" />
+            <span className="truncate">Video Call</span>
           </button>
           <button 
             onClick={() => navigate('/prescriptions')}
-            className="flex-1 sm:flex-none flex items-center gap-3 px-8 py-4 bg-white border border-slate-200 text-slate-700 rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all active:scale-95"
+            className="flex items-center gap-2 sm:gap-3 px-4 sm:px-8 py-3.5 sm:py-4 bg-white border border-slate-200 text-slate-700 rounded-xl sm:rounded-2xl text-[10px] sm:text-[11px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all active:scale-95 justify-center sm:justify-start shadow-sm"
           >
-            Prescription Pad
+            <span>Script Pad</span>
           </button>
         </div>
       </div>
@@ -222,7 +220,7 @@ export default function DoctorDashboard() {
         <div className="lg:col-span-2 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-center mb-6">
             <h3 className="font-bold text-slate-800 flex items-center gap-2">
-              <TrendingUp size={18} className="text-emerald-500" />
+              <TrendingUp size={18} className="text-brand-500" />
               Practice Growth
             </h3>
             <select className="text-[10px] font-bold text-slate-400 bg-slate-50 border-none rounded p-1 outline-none appearance-none cursor-pointer">
@@ -235,8 +233,8 @@ export default function DoctorDashboard() {
               <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#16a34a" stopOpacity={0.1}/>
+                    <stop offset="95%" stopColor="#16a34a" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -245,7 +243,7 @@ export default function DoctorDashboard() {
                 <Tooltip 
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
                 />
-                <Area type="monotone" dataKey="revenue" stroke="#10b981" fillOpacity={1} fill="url(#colorRev)" strokeWidth={2} />
+                <Area type="monotone" dataKey="revenue" stroke="#16a34a" fillOpacity={1} fill="url(#colorRev)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -254,24 +252,24 @@ export default function DoctorDashboard() {
         <div className="bg-slate-900 rounded-3xl p-6 md:p-8 text-white flex flex-col shadow-2xl shadow-slate-200 relative overflow-hidden h-full group transition-all hover:scale-[1.01]">
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-500/20">
+              <div className="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center shadow-lg shadow-brand-500/20">
                 <BrainCircuit size={16} className="text-white" />
               </div>
-              <span className="font-bold uppercase tracking-[0.2em] text-[10px] text-emerald-400">Gemini Clinical Engine</span>
+              <span className="font-bold uppercase tracking-[0.2em] text-[10px] text-brand-400">Gemini Clinical Engine</span>
             </div>
             <h4 className="text-xl font-bold leading-tight mb-3 tracking-tight">Prescription Precision</h4>
             <p className="text-slate-400 text-sm mb-8 leading-relaxed font-medium">Lycopodium match detected for Case #2401 based on 4PM aggravation patterns.</p>
             <div className="space-y-4">
               <div className="bg-white/5 rounded-2xl p-4 text-[11px] border border-white/5 backdrop-blur-sm">
-                <span className="text-emerald-400 font-bold uppercase tracking-widest text-[9px]">Healing Insight</span>
+                <span className="text-brand-400 font-bold uppercase tracking-widest text-[9px]">Healing Insight</span>
                 <p className="mt-2 text-slate-300 leading-relaxed font-medium italic">Consider intercurrent remedy for miasmatic block in chronic progression.</p>
               </div>
-              <button className="w-full py-4 bg-emerald-500 text-white rounded-2xl text-[11px] font-bold hover:bg-emerald-400 transition-all uppercase tracking-[0.2em] shadow-xl shadow-emerald-900/40 active:scale-95 leading-none">
+              <button className="w-full py-4 bg-brand-500 text-white rounded-2xl text-[11px] font-bold hover:bg-brand-400 transition-all uppercase tracking-[0.2em] shadow-xl shadow-brand-900/40 active:scale-95 leading-none">
                 Repertory Sync
               </button>
             </div>
           </div>
-          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-1000"></div>
+          <div className="absolute top-0 right-0 w-32 h-32 bg-brand-500/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-1000"></div>
         </div>
       </div>
 
@@ -281,7 +279,7 @@ export default function DoctorDashboard() {
           <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm transition-all">
             <div className="flex justify-between items-center mb-6">
                 <h3 className="font-bold text-slate-800">Mastering Homeopathy</h3>
-                <button className="text-xs text-emerald-600 font-bold hover:underline">Archives</button>
+                <button className="text-xs text-brand-600 font-bold hover:underline">Archives</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2 group cursor-pointer">
@@ -295,7 +293,7 @@ export default function DoctorDashboard() {
               <div className="space-y-2 group cursor-pointer">
                 <div className="aspect-video bg-slate-100 rounded-lg overflow-hidden relative">
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent"></div>
-                  <span className="absolute top-2 left-2 px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-bold rounded">REPERTORY</span>
+                  <span className="absolute top-2 left-2 px-2 py-0.5 bg-brand-600 text-white text-[9px] font-bold rounded">REPERTORY</span>
                   <p className="absolute bottom-3 left-3 right-3 text-white text-sm font-bold leading-snug">Comparison of Silicea vs Phosphorus in Suppurating Conditions</p>
                 </div>
                 <p className="text-[10px] sm:text-xs text-slate-500 line-clamp-2">Key differentiators and characteristic modalities for precision remedy selection in clinical practice.</p>
@@ -336,7 +334,7 @@ export default function DoctorDashboard() {
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
             <h3 className="font-bold text-slate-800">{t('upcoming_consultations')}</h3>
-            <button onClick={() => navigate('/appointments')} className="text-xs text-emerald-600 font-semibold hover:underline">View All</button>
+            <button onClick={() => navigate('/appointments')} className="text-xs text-brand-600 font-semibold hover:underline">View All</button>
           </div>
           <div className="divide-y divide-slate-50">
             {upcomingAppts.length === 0 ? (
@@ -355,7 +353,7 @@ export default function DoctorDashboard() {
                   </div>
                   <div className="text-right">
                     <p className="text-xs font-bold text-slate-800">{format(new Date(appt.date + 'T' + appt.time), 'hh:mm a')}</p>
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">
+                    <span className="px-2 py-0.5 rounded-full bg-brand-100 text-brand-700 text-[10px] font-bold">
                       {appt.type === 'Video' ? 'VIDEO' : 'CLINIC'}
                     </span>
                   </div>
@@ -369,7 +367,7 @@ export default function DoctorDashboard() {
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <div className="flex justify-between items-center mb-4">
               <h4 className="text-sm font-bold text-slate-800">Billing Overview</h4>
-              <span className="text-[10px] font-bold text-emerald-500">SYNCED</span>
+              <span className="text-[10px] font-bold text-brand-500">SYNCED</span>
             </div>
             <div className="flex items-end justify-between">
               <div>
@@ -382,7 +380,7 @@ export default function DoctorDashboard() {
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <div className="flex justify-between items-center mb-4">
               <h4 className="text-sm font-bold text-slate-800">Patient Feedback</h4>
-              <span className="text-[10px] font-bold text-emerald-500">RECENT</span>
+              <span className="text-[10px] font-bold text-brand-500">RECENT</span>
             </div>
             {recentFeedbacks.length === 0 ? (
               <p className="text-xs text-slate-400 italic">No reviews yet.</p>
@@ -402,7 +400,7 @@ export default function DoctorDashboard() {
                 ))}
               </div>
             )}
-            <button className="text-xs text-emerald-600 font-bold hover:underline mt-4 text-left">View All Reviews</button>
+            <button className="text-xs text-brand-600 font-bold hover:underline mt-4 text-left">View All Reviews</button>
           </div>
         </div>
       </div>
@@ -412,7 +410,8 @@ export default function DoctorDashboard() {
 
 function StatCard({ title, value, change, icon: Icon, trend, color, className = "" }: any) {
   const colorMap: any = {
-    emerald: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    brand: 'bg-brand-50 text-brand-600 border-brand-100',
+    emerald: 'bg-brand-50 text-brand-600 border-brand-100',
     indigo: 'bg-indigo-50 text-indigo-600 border-indigo-100',
     red: 'bg-red-50 text-red-600 border-red-100',
     blue: 'bg-blue-50 text-blue-600 border-blue-100',
@@ -420,18 +419,18 @@ function StatCard({ title, value, change, icon: Icon, trend, color, className = 
   };
 
   return (
-    <div className={`bg-white p-4 sm:p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-1 ${className}`}>
-      <div className="flex justify-between items-start mb-2">
-        <p className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{title}</p>
-        <div className={`p-1.5 sm:p-2 rounded-lg ${colorMap[color]}`}>
+    <div className={`bg-white p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm transition-all active:scale-[0.98] ${className}`}>
+      <div className="flex justify-between items-start mb-1.5 sm:mb-2">
+        <p className="text-[9px] sm:text-xs font-black text-slate-400 uppercase tracking-widest truncate max-w-[80px] sm:max-w-none">{title}</p>
+        <div className={`p-1.5 sm:p-2 rounded-lg ${colorMap[color] || colorMap.brand}`}>
           <Icon size={14} className="sm:size-4" />
         </div>
       </div>
-      <p className={`text-xl sm:text-2xl font-bold ${color === 'red' ? 'text-red-600' : 'text-slate-900'}`}>{value}</p>
-      <div className="mt-1 sm:mt-2 flex items-center gap-1">
-        {trend === 'up' && <TrendingUp size={10} className="sm:size-[12px] text-emerald-500" />}
-        {trend === 'down' && <TrendingDown size={10} className="sm:size-[12px] text-red-500" />}
-        <p className={`text-[8px] sm:text-[10px] font-bold ${trend === 'up' ? 'text-emerald-600' : trend === 'down' ? 'text-red-600' : 'text-slate-400'}`}>
+      <p className={`text-lg sm:text-2xl font-bold tracking-tight ${color === 'red' ? 'text-red-500' : 'text-slate-900'} leading-none mb-1 sm:mb-2`}>{value}</p>
+      <div className="flex items-center gap-1">
+        {trend === 'up' && <TrendingUp size={10} className="text-brand-500" />}
+        {trend === 'down' && <TrendingDown size={10} className="text-red-500" />}
+        <p className={`text-[8px] sm:text-[10px] font-bold tracking-tight ${trend === 'up' ? 'text-brand-600' : trend === 'down' ? 'text-red-500' : 'text-slate-400'}`}>
           {change}
         </p>
       </div>
@@ -453,7 +452,7 @@ function ActivityItem({ title, time, desc, remedy, amount }: any) {
         </div>
         <p className="text-xs text-slate-500 mb-1">{desc}</p>
         {remedy && <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">{remedy}</span>}
-        {amount && <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{amount}</span>}
+        {amount && <span className="text-[10px] font-bold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full">{amount}</span>}
       </div>
     </div>
   );

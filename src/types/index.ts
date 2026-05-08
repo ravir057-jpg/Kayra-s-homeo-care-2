@@ -126,6 +126,8 @@ export interface UserProfile {
   isVerified?: boolean;
   razorpayKeyId?: string;
   razorpayKeySecret?: string;
+  rating?: number;
+  patientCount?: number;
   createdAt?: string;
 }
 

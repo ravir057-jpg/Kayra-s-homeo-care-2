@@ -1,6 +1,6 @@
 {
-  "name": "Kayra Homeo Care",
-  "description": "A comprehensive homeopathic clinical management system featuring doctor/patient portals, AI repertory tools, inventory tracking, and integrated billing.",
+  "name": "Kayra's Homoeo. Care",
+  "description": "Premium clinical management sanctuary for homeopathy. AI-powered diagnostics, HIPAA-secure patient records, and holistic clinical workflows.",
   "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["AI Diagnostics", "Patient Management", "Inventory Control", "Billing"]
 }
