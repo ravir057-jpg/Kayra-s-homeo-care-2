@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../../lib/db';
 import { logAction } from '../../lib/audit';
-import { collection, getDocs, doc, updateDoc, addDoc, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, addDoc, query, orderBy, where } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { Invoice, Patient, UserProfile } from '../../types';
 import { 
@@ -18,7 +18,8 @@ import {
   Printer,
   CheckCircle2,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Package
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
@@ -26,6 +27,7 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { processPayment } from '../../services/paymentService';
 import axios from 'axios';
+import InventoryManager from './InventoryManager';
 
 import { useLanguage } from '../../lib/i18n';
 
@@ -35,6 +37,7 @@ interface BillingManagerProps {
 
 export default function BillingManager({ profile }: BillingManagerProps) {
   const { t } = useLanguage();
+  const [activeBillingTab, setActiveBillingTab] = useState<'billing' | 'inventory'>('billing');
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,15 +66,30 @@ export default function BillingManager({ profile }: BillingManagerProps) {
 
   useEffect(() => {
     const fetchData = async () => {
-      const invSnap = await getDocs(query(collection(db, 'invoices'), orderBy('createdAt', 'desc')));
-      setInvoices(invSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
+      if (!profile?.clinicId) return;
+      try {
+        const invQ = query(
+          collection(db, 'invoices'), 
+          where('clinicId', '==', profile.clinicId),
+          orderBy('createdAt', 'desc')
+        );
+        const invSnap = await getDocs(invQ);
+        setInvoices(invSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
 
-      const patSnap = await getDocs(collection(db, 'patients'));
-      setPatients(patSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient)));
-      setLoading(false);
+        const patQ = query(
+          collection(db, 'patients'),
+          where('clinicId', '==', profile.clinicId)
+        );
+        const patSnap = await getDocs(patQ);
+        setPatients(patSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient)));
+      } catch (e) {
+        console.error("Error fetching billing data:", e);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchData();
-  }, []);
+  }, [profile?.clinicId]);
 
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
@@ -225,16 +243,24 @@ export default function BillingManager({ profile }: BillingManagerProps) {
     }
     
     try {
+      const commRate = profile?.commissionRate || 10;
+      const commAmt = (newInvoice.amount * commRate) / 100;
+      const netShare = newInvoice.amount - commAmt;
+
       // For demo, we simulate the razorpay order creation
       const razorpayOrderId = `order_${Math.random().toString(36).substring(7)}`;
       
       const docRef = await addDoc(collection(db, 'invoices'), {
         patientId: newInvoice.patientId,
         doctorId: profile?.uid,
+        clinicId: profile?.clinicId,
         amount: newInvoice.amount,
+        fee: newInvoice.amount,
+        commissionAmount: commAmt,
+        doctorNetShare: netShare,
         status: 'Pending',
         razorpayOrderId: razorpayOrderId,
-        items: [{ description: newInvoice.description, price: newInvoice.amount }],
+        items: [{ description: newInvoice.description, price: newInvoice.amount, quantity: 1 }],
         createdAt: new Date().toISOString()
       });
       
@@ -242,6 +268,7 @@ export default function BillingManager({ profile }: BillingManagerProps) {
         action: 'Create Invoice',
         entityType: 'Invoice',
         entityId: docRef.id,
+        clinicId: profile?.clinicId,
         details: `Created invoice for ₹${newInvoice.amount}`
       });
       
@@ -249,11 +276,15 @@ export default function BillingManager({ profile }: BillingManagerProps) {
       const freshInv: Invoice = {
         id: docRef.id,
         patientId: newInvoice.patientId,
-        doctorId: profile?.uid,
+        doctorId: profile?.uid || '',
+        clinicId: profile?.clinicId || '',
         amount: newInvoice.amount,
+        fee: newInvoice.amount,
+        commissionAmount: commAmt,
+        doctorNetShare: netShare,
         status: 'Pending',
         razorpayOrderId: razorpayOrderId,
-        items: [{ description: newInvoice.description, price: newInvoice.amount }],
+        items: [{ description: newInvoice.description, price: newInvoice.amount, quantity: 1 }],
         createdAt: new Date().toISOString()
       };
       setInvoices([freshInv, ...invoices]);
@@ -264,7 +295,39 @@ export default function BillingManager({ profile }: BillingManagerProps) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 lg:space-y-6 h-full flex flex-col pb-20">
+      {/* Billing & Inventory Tab-Switcher */}
+      <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl w-fit border border-slate-200/50 shadow-sm shrink-0">
+        <button
+          onClick={() => setActiveBillingTab('billing')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            activeBillingTab === 'billing'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <CreditCard size={14} />
+          Counter Billing & Invoices
+        </button>
+        <button
+          onClick={() => setActiveBillingTab('inventory')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            activeBillingTab === 'inventory'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <Package size={14} />
+          Medicine Inventory & Stores
+        </button>
+      </div>
+
+      {activeBillingTab === 'inventory' ? (
+        <div className="flex-1 overflow-y-auto">
+          <InventoryManager profile={profile} />
+        </div>
+      ) : (
+        <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="bg-white p-4 lg:p-6 rounded-2xl border border-slate-200 shadow-sm lg:col-span-3 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4 w-full">
@@ -303,8 +366,12 @@ export default function BillingManager({ profile }: BillingManagerProps) {
         </div>
 
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Weekly Revenue</p>
-          <p className="text-2xl font-black text-slate-900">₹{invoices.filter(i => i.status === 'Paid').reduce((acc, curr) => acc + curr.amount, 0).toLocaleString()}</p>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Total Revenue</p>
+          <p className="text-xl font-black text-slate-900">₹{invoices.filter(i => i.status === 'Paid').reduce((acc, curr) => acc + curr.amount, 0).toLocaleString()}</p>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Net Earnings</p>
+          <p className="text-xl font-black text-emerald-600">₹{invoices.filter(i => i.status === 'Paid').reduce((acc, curr) => acc + (curr.doctorNetShare || curr.amount), 0).toLocaleString()}</p>
         </div>
       </div>
 
@@ -538,11 +605,17 @@ export default function BillingManager({ profile }: BillingManagerProps) {
                           <td className="px-6 py-4 text-sm font-bold text-slate-900 text-right">₹{item.price.toFixed(2)}</td>
                         </tr>
                       ))}
+                      {viewingInvoice.commissionAmount && (
+                        <tr>
+                          <td className="px-6 py-4 text-xs font-medium text-red-500">Platform Commission ({((viewingInvoice.commissionAmount / viewingInvoice.amount) * 100).toFixed(0)}%)</td>
+                          <td className="px-6 py-4 text-xs font-medium text-red-500 text-right">-₹{viewingInvoice.commissionAmount.toFixed(2)}</td>
+                        </tr>
+                      )}
                     </tbody>
-                    <tfoot className="bg-slate-50/50">
+                    <tfoot className="bg-emerald-50/50">
                       <tr>
-                        <td className="px-6 py-4 text-sm font-bold text-slate-500">Total Amount</td>
-                        <td className="px-6 py-4 text-xl font-black text-slate-900 text-right">₹{viewingInvoice.amount.toFixed(2)}</td>
+                        <td className="px-6 py-4 text-sm font-bold text-slate-500">Net Your Share</td>
+                        <td className="px-6 py-4 text-xl font-black text-emerald-600 text-right">₹{(viewingInvoice.doctorNetShare || viewingInvoice.amount).toFixed(2)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -803,7 +876,9 @@ export default function BillingManager({ profile }: BillingManagerProps) {
           </table>
         </div>
       </div>
-      </div>
     </div>
+    </div>
+    )}
+  </div>
   );
 }

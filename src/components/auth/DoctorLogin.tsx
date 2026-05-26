@@ -62,7 +62,11 @@ export default function DoctorLogin() {
       navigate('/dashboard');
     } catch (error: any) {
       console.error("Google Auth Error:", error);
-      toast.error(error.message || 'Authentication failed');
+      if (error.code === 'auth/network-request-failed') {
+        toast.error('Network Error: Please check if popups are blocked or if your firewall is blocking Google Auth. Try using the direct App URL if this persists.');
+      } else {
+        toast.error(error.message || 'Authentication failed');
+      }
     }
   };
 
@@ -98,7 +102,12 @@ export default function DoctorLogin() {
       }
       navigate('/dashboard');
     } catch (error: any) {
-      toast.error(error.message);
+      console.error("Google Auth Error:", error);
+      if (error.code === 'auth/network-request-failed') {
+        toast.error('Network Error: Please check if popups are blocked or if your firewall is blocking Google Auth.');
+      } else {
+        toast.error(error.message);
+      }
     }
   };
 

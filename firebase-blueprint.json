@@ -1,11 +1,37 @@
 {
   "entities": {
+    "clinic": {
+      "title": "Clinic Profile",
+      "description": "Information about a clinic tenant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "tagline": { "type": "string" },
+        "description": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "pincode": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "subscriptionPlan": { "type": "string", "enum": ["basic", "pro", "enterprise"] },
+        "subscriptionStatus": { "type": "string", "enum": ["active", "inactive", "trial"] },
+        "subscriptionExpiry": { "type": "string", "format": "date-time" },
+        "settings": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "ownerId", "subscriptionPlan"]
+    },
     "patient": {
       "title": "Patient Profile",
       "description": "Patient user details for Homeopathic care",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
+        "clinicId": { "type": "string" },
         "khcId": { "type": "string", "description": "Unique Clinic ID (e.g. KHC-123456)" },
         "name": { "type": "string" },
         "age": { "type": "number" },
@@ -27,6 +53,7 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
+        "clinicId": { "type": "string" },
         "name": { "type": "string" },
         "qualification": { "type": "string", "description": "e.g. BHMS" },
         "regNumber": { "type": "string" },
@@ -36,7 +63,8 @@
         "pincode": { "type": "string" },
         "address": { "type": "string" },
         "availableSlots": { "type": "object", "description": "Map of days to available time slots" },
-        "fees": { "type": "number" },
+        "fees": { "type": "number", "description": "Consultation fee set by the doctor" },
+        "commissionRate": { "type": "number", "description": "Percentage taken as platform commission (e.g. 10)" },
         "rating": { "type": "number" },
         "totalPatients": { "type": "number" },
         "isVerified": { "type": "boolean" },
@@ -50,11 +78,16 @@
       "type": "object",
       "properties": {
         "appointmentId": { "type": "string" },
+        "clinicId": { "type": "string" },
         "patientId": { "type": "string" },
         "doctorId": { "type": "string" },
         "date": { "type": "string", "format": "date" },
         "timeSlot": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "confirmed", "completed", "cancelled"] },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "completed", "cancelled", "payment-pending"] },
+        "type": { "type": "string", "enum": ["Physical", "Online"] },
+        "fee": { "type": "number", "description": "Total fee charged" },
+        "commissionAmount": { "type": "number", "description": "Commission deducted" },
+        "doctorNetShare": { "type": "number", "description": "Amount payable to doctor" },
         "symptoms": { "type": "string" },
         "notes": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -68,6 +101,7 @@
       "type": "object",
       "properties": {
         "prescriptionId": { "type": "string" },
+        "clinicId": { "type": "string" },
         "appointmentId": { "type": "string" },
         "patientId": { "type": "string" },
         "doctorId": { "type": "string" },
@@ -85,15 +119,24 @@
       "description": "Uploaded patient reports with AI analysis",
       "type": "object",
       "properties": {
-        "reportId": { "type": "string" },
+        "id": { "type": "string" },
+        "clinicId": { "type": "string" },
         "patientId": { "type": "string" },
+        "patientUid": { "type": "string" },
+        "patientName": { "type": "string" },
+        "title": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string" },
+        "fileData": { "type": "string", "description": "Base64 encoded file data" },
+        "status": { "type": "string", "enum": ["Pending Analysis", "Analyzed"] },
+        "category": { "type": "string", "enum": ["Pathology", "Radiology"] },
         "doctorId": { "type": "string" },
-        "reportType": { "type": "string" },
-        "fileUrl": { "type": "string" },
-        "aiAnalysis": { "type": "string" },
-        "uploadedAt": { "type": "string", "format": "date-time" }
+        "summary": { "type": "string" },
+        "fullAnalysis": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "analyzedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["patientId", "reportType", "fileUrl"]
+      "required": ["patientId", "patientUid", "title", "fileData"]
     },
     "review": {
       "title": "Doctor Review",
@@ -117,8 +160,12 @@
          "id": { "type": "string" },
          "patientId": { "type": "string" },
          "doctorId": { "type": "string" },
-         "amount": { "type": "number" },
+         "appointmentId": { "type": "string" },
+         "amount": { "type": "number", "description": "Total amount paid" },
+         "commissionAmount": { "type": "number" },
+         "doctorNetShare": { "type": "number" },
          "status": { "type": "string", "enum": ["Paid", "Pending", "Cancelled"] },
+         "paymentMethod": { "type": "string" },
          "createdAt": { "type": "string", "format": "date-time" }
       }
     },
@@ -128,9 +175,13 @@
        "type": "object",
        "properties": {
           "id": { "type": "string" },
+          "clinicId": { "type": "string" },
           "name": { "type": "string" },
+          "category": { "type": "string" },
           "stockLevel": { "type": "number" },
-          "minLevel": { "type": "number" }
+          "unit": { "type": "string" },
+          "price": { "type": "number" },
+          "lastUpdated": { "type": "string", "format": "date-time" }
        }
     },
     "symptomLog": {
@@ -146,6 +197,10 @@
     }
   },
   "firestore": {
+    "/clinics/{clinicId}": {
+      "schema": "clinic",
+      "description": "Clinic tenant profiles"
+    },
     "/users/{userId}": {
       "schema": "patient",
       "description": "User profiles with roles (patient/doctor)"
@@ -166,9 +221,9 @@
       "schema": "prescription",
       "description": "Medical prescriptions"
     },
-    "/medicalReports/{reportId}": {
+    "/medical_reports/{reportId}": {
       "schema": "medicalReport",
-      "description": "Diagnostic reports"
+      "description": "Diagnostic reports with patient ownership"
     },
     "/feedbacks/{feedbackId}": {
       "schema": "review",

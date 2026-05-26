@@ -5,6 +5,7 @@ export type AuditEntityType = 'Patient' | 'Appointment' | 'Prescription' | 'Invo
 
 export interface AuditLogData {
   action: string;
+  clinicId?: string;
   entityType?: AuditEntityType;
   entityId?: string;
   details?: string;
@@ -20,6 +21,7 @@ export async function logAction(data: AuditLogData) {
     await addDoc(collection(db, path), {
       userId: user.uid,
       userEmail: user.email,
+      clinicId: data.clinicId || null,
       action: data.action,
       entityType: data.entityType || null,
       entityId: data.entityId || null,

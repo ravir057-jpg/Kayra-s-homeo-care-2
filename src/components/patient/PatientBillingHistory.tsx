@@ -44,16 +44,16 @@ export default function PatientBillingHistory({ invoices, onDownload, onPaymentS
   };
 
   return (
-    <div className="space-y-8">
-      <div className="bg-slate-900 p-8 sm:p-14 rounded-[3.5rem] text-white relative overflow-hidden shadow-2xl shadow-indigo-500/20">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-[120px] -mr-48 -mt-48 transition-all"></div>
+    <div className="space-y-8 text-slate-800">
+      <div className="bg-brand-600 p-8 sm:p-16 rounded-[3.5rem] text-white relative overflow-hidden shadow-2xl shadow-brand-100">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-[120px] -mr-48 -mt-48 transition-all"></div>
         <div className="relative z-10">
-          <div className="inline-flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-2 rounded-2xl mb-8 border border-white/10">
-            <CreditCard size={16} className="text-indigo-400" />
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-200">Financial Integrity</span>
+          <div className="inline-flex items-center gap-3 bg-white/20 backdrop-blur-md px-5 py-2.5 rounded-2xl mb-8 border border-white/20">
+            <CreditCard size={20} className="text-white" />
+            <span className="text-xs font-black uppercase tracking-[0.2em] text-white">Financial Ledger</span>
           </div>
-          <h3 className="text-3xl sm:text-5xl font-black mb-6 tracking-tight leading-[1.1]">Clinical Accounts & Settlements</h3>
-          <p className="text-slate-400 text-sm sm:text-base max-w-2xl leading-relaxed font-medium">Monitor your health investments and manage invoices with absolute transparency. Each statement is cryptographically verified for your security.</p>
+          <h3 className="text-4xl sm:text-6xl font-black mb-6 tracking-tight leading-[1.1]">Invoices & Health Settlements</h3>
+          <p className="text-brand-50 text-sm sm:text-lg max-w-2xl leading-relaxed font-medium opacity-90">Monitor your health investments and manage invoices with ease. Each statement is verified for your security.</p>
         </div>
       </div>
 
@@ -75,7 +75,7 @@ export default function PatientBillingHistory({ invoices, onDownload, onPaymentS
           </div>
         </div>
 
-        <div className="overflow-x-auto no-scrollbar">
+        <div className="hidden sm:block overflow-x-auto no-scrollbar">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50/50">
@@ -89,7 +89,7 @@ export default function PatientBillingHistory({ invoices, onDownload, onPaymentS
             <tbody className="divide-y divide-slate-100">
               {invoices.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-10 py-32 text-center">
+                   <td colSpan={5} className="px-10 py-32 text-center">
                     <div className="flex flex-col items-center justify-center">
                       <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-6 border border-slate-100">
                         <AlertCircle size={32} strokeWidth={1} />
@@ -132,10 +132,10 @@ export default function PatientBillingHistory({ invoices, onDownload, onPaymentS
                         {inv.status === 'Pending' && (
                           <button 
                             onClick={() => handlePayment(inv)}
-                            className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-xl shadow-emerald-500/10 active:scale-95"
+                            className="px-6 py-4 bg-brand-600 text-white rounded-[1.25rem] text-[10px] font-black uppercase tracking-widest hover:bg-brand-700 transition-all flex items-center gap-2 shadow-xl shadow-brand-100 active:scale-95"
                           >
-                            <CreditCard size={14} />
-                            Settle Now
+                            <CreditCard size={16} />
+                            Pay Now
                           </button>
                         )}
                         <button 
@@ -152,6 +152,65 @@ export default function PatientBillingHistory({ invoices, onDownload, onPaymentS
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile View Card Deck */}
+        <div className="block sm:hidden p-6 space-y-4">
+          {invoices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-4 border border-slate-100">
+                <AlertCircle size={24} strokeWidth={1} />
+              </div>
+              <p className="text-slate-800 font-extrabold uppercase tracking-widest text-[10px] mb-1">Financial Records Null</p>
+              <p className="text-slate-400 text-xs font-medium">No transactional data has been archived.</p>
+            </div>
+          ) : (
+            invoices.map((inv) => (
+              <div key={inv.id} className="p-5 bg-slate-50/50 rounded-3xl border border-slate-200/65 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-black text-slate-400">
+                    {format(new Date(inv.createdAt), 'dd MMM yyyy')}
+                  </span>
+                  <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest ${
+                    inv.status === 'Paid' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
+                    inv.status === 'Pending' ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-red-50 text-red-600 border border-red-100'
+                  }`}>
+                    {inv.status === 'Paid' ? <CheckCircle2 size={10} fill="currentColor" className="text-emerald-500/20" /> : <Clock size={10} className="text-amber-500" />}
+                    {inv.status}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 bg-white border border-slate-200 shadow-sm rounded-lg flex items-center justify-center text-slate-400">
+                      <FileText size={12} />
+                    </div>
+                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">#{inv.id?.slice(-8).toUpperCase()}</span>
+                  </div>
+                  <span className="text-base font-black text-slate-900 leading-none">₹{inv.amount}</span>
+                </div>
+
+                <div className="flex gap-2 pt-3 border-t border-slate-100">
+                  {inv.status === 'Pending' && (
+                    <button 
+                      onClick={() => handlePayment(inv)}
+                      className="flex-1 py-3 bg-brand-600 text-white rounded-[1rem] text-[10px] font-black uppercase tracking-widest hover:bg-brand-700 transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-brand-100/50 active:scale-95"
+                    >
+                      <CreditCard size={14} />
+                      Pay Now
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => onDownload(inv)}
+                    className="p-3 text-slate-500 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all flex items-center justify-center"
+                    title="Download Statement"
+                  >
+                    <Download size={16} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

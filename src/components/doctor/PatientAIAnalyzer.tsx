@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Brain, FileScan, Upload, X, FileText, ImageIcon, Copy, FilePlus, Sparkles, BookOpen, MessageSquare, Info } from 'lucide-react';
-import { analyzeSpecificCase, analyzeMedicalReport, searchMateriaMedica, getAdvancedRepertoryAnalysis } from '../../lib/gemini';
+import { analyzeSpecificCase, analyzeMedicalReport, searchMateriaMedica, getAdvancedRepertoryAnalysis, synthesizeSymptomAndLabReport } from '../../lib/gemini';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -14,8 +14,10 @@ interface PatientAIAnalyzerProps {
 
 export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyzerProps) {
   const { t } = useLanguage();
-  const [activeTab, setActiveTab] = useState<'case' | 'report' | 'mm' | 'repertory'>('case');
+  const [activeTab, setActiveTab] = useState<'case' | 'report' | 'mm' | 'repertory' | 'synthesis'>('case');
   const [input, setInput] = useState('');
+  const [glassInput, setGlassInput] = useState('');
+  const [symptomsInput, setSymptomsInput] = useState('');
   const [result, setResult] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ data: string; mimeType: string; name: string } | null>(null);
@@ -47,22 +49,29 @@ export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyze
     setLoading(true);
     let output = '';
     try {
-      if (activeTab === 'case') {
+      if (activeTab === 'synthesis') {
+        if (!glassInput || !symptomsInput) {
+          toast.error("Please provide both inputs");
+          setLoading(false);
+          return;
+        }
+        output = await synthesizeSymptomAndLabReport(glassInput, symptomsInput, `Case Synthesis for ${patient.name}`);
+      } else if (activeTab === 'case') {
         const context = `Patient: ${patient.name}, Age: ${patient.dob ? new Date().getFullYear() - new Date(patient.dob).getFullYear() : 'N/A'}, Gender: ${patient.gender}, Medical History: ${patient.medicalHistory || 'None'}`;
-        output = await analyzeSpecificCase(context, input || 'Perform general case analysis based on history.');
+        output = await analyzeSpecificCase(context, input || 'Perform general case analysis based on history.', `Case analysis for ${patient.name}`);
       } else if (activeTab === 'report') {
         if (!selectedFile) {
           toast.error("Please upload a report first");
           setLoading(false);
           return;
         }
-        output = await analyzeMedicalReport({ data: selectedFile.data, mimeType: selectedFile.mimeType });
+        output = await analyzeMedicalReport({ data: selectedFile.data, mimeType: selectedFile.mimeType }, `Patient: ${patient.name}`, `Medical report analysis for ${patient.name}`);
       } else if (activeTab === 'mm') {
         if (!input) return;
-        output = await searchMateriaMedica(input);
+        output = await searchMateriaMedica(input, "Materia Medica Research");
       } else if (activeTab === 'repertory') {
         if (!input) return;
-        output = await getAdvancedRepertoryAnalysis(input);
+        output = await getAdvancedRepertoryAnalysis(input, `Repertory analysis for ${patient.name}`);
       }
       setResult(output);
     } catch (error) {
@@ -84,6 +93,8 @@ export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyze
 
   const clearInput = () => {
     setInput('');
+    setGlassInput('');
+    setSymptomsInput('');
     setSelectedFile(null);
     setResult('');
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -123,6 +134,13 @@ export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyze
           {/* Sidebar Tabs */}
           <div className="w-full lg:w-72 border-r border-slate-100 p-4 lg:p-6 space-y-2 shrink-0 bg-slate-50/30 overflow-x-auto lg:overflow-y-auto no-scrollbar flex flex-row lg:flex-col">
             <TabButton 
+              active={activeTab === 'synthesis'} 
+              onClick={() => { setActiveTab('synthesis'); clearInput(); }} 
+              icon={Brain} 
+              title="AI Clinical Synthesis" 
+              desc="Glass AI + Symptoms" 
+            />
+            <TabButton 
               active={activeTab === 'case'} 
               onClick={() => { setActiveTab('case'); clearInput(); }} 
               icon={MessageSquare} 
@@ -159,6 +177,7 @@ export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyze
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-bold text-slate-700 uppercase tracking-widest flex items-center gap-2">
+                    {activeTab === 'synthesis' && 'Synthesize Clinical Reports & Patient Case'}
                     {activeTab === 'case' && 'Enter Presenting Symptoms'}
                     {activeTab === 'report' && 'Upload Medical Records'}
                     {activeTab === 'mm' && 'Search Remedy / Condition'}
@@ -172,7 +191,37 @@ export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyze
                 </div>
 
                 <AnimatePresence mode="wait">
-                  {activeTab === 'report' ? (
+                  {activeTab === 'synthesis' ? (
+                    <motion.div 
+                      key="synthesis-fields"
+                      initial={{ opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="grid grid-cols-1 md:grid-cols-2 gap-4"
+                    >
+                      <div className="flex flex-col space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          1. [GLASS_AI_OUTPUT] (Conventional Diagnosis & Lab Review)
+                        </label>
+                        <textarea 
+                          value={glassInput}
+                          onChange={(e) => setGlassInput(e.target.value)}
+                          className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 min-h-[160px] transition-all text-slate-700 placeholder:text-slate-400 text-xs font-medium leading-relaxed"
+                          placeholder="Paste conventional diagnosis, lab report findings, and differential diagnosis..."
+                        />
+                      </div>
+                      <div className="flex flex-col space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          2. [PATIENT_SYMPTOMS] (Subjective symptoms & generals)
+                        </label>
+                        <textarea 
+                          value={symptomsInput}
+                          onChange={(e) => setSymptomsInput(e.target.value)}
+                          className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 min-h-[160px] transition-all text-slate-700 placeholder:text-slate-400 text-xs font-medium leading-relaxed"
+                          placeholder="Paste/type subjective physical generals, mental-emotional symptoms, modalities, and miasmatic indications..."
+                        />
+                      </div>
+                    </motion.div>
+                  ) : activeTab === 'report' ? (
                     <motion.div 
                       key="report-upload"
                       initial={{ opacity: 0, x: 10 }}
@@ -237,7 +286,7 @@ export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyze
 
                 <button 
                   onClick={handleRun}
-                  disabled={loading || (activeTab === 'report' ? !selectedFile : !input)}
+                  disabled={loading || (activeTab === 'synthesis' ? (!glassInput || !symptomsInput) : activeTab === 'report' ? !selectedFile : !input)}
                   className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-900 transition-all shadow-xl shadow-indigo-100 disabled:opacity-50 disabled:grayscale active:scale-[0.98] flex items-center justify-center gap-3 text-center"
                 >
                   {loading ? (
@@ -282,6 +331,14 @@ export default function PatientAIAnalyzer({ patient, onClose }: PatientAIAnalyze
 
                   <div className="relative z-10 markdown-body prose prose-slate max-w-none prose-sm lg:prose-base leading-loose font-medium">
                     <ReactMarkdown>{result}</ReactMarkdown>
+                  </div>
+
+                  {/* AI Disclaimer */}
+                  <div className="mt-10 p-6 bg-slate-50 border border-slate-100 rounded-2xl flex gap-4 items-start">
+                    <Info size={20} className="text-slate-400 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                      <span className="font-bold text-slate-700">Medical AI Assistant Notice:</span> This analysis is generated by an ultra-advanced clinical LLM to assist in homeopathic case-taking. It is meant to highlight potential rubrics, clinical generalities, and miasmatic patterns. It is NOT a replacement for qualified physician judgment. Always verify clinical findings before prescribing.
+                    </p>
                   </div>
                   
                   <div className="mt-12 pt-8 border-t border-slate-100 flex flex-wrap gap-4 relative z-10">

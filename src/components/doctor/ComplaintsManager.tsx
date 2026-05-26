@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../../lib/db';
 import { logAction } from '../../lib/audit';
-import { collection, query, getDocs, orderBy, doc, updateDoc, where } from 'firebase/firestore';
+import { collection, query, getDocs, orderBy, doc, updateDoc, where, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { AlertCircle, CheckCircle2, Clock, ShieldAlert, User, Search, Filter, MessageSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
+import { auth } from '../../lib/db';
 
 interface Complaint {
   id: string;
@@ -29,11 +30,32 @@ export default function ComplaintsManager() {
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [resolutionNote, setResolutionNote] = useState('');
 
+  const [doctorProfile, setDoctorProfile] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchDocProfile = async () => {
+      if (auth.currentUser) {
+        const d = await getDoc(doc(db, 'users', auth.currentUser.uid));
+        if (d.exists()) setDoctorProfile(d.data());
+      }
+    };
+    fetchDocProfile();
+  }, []);
+
   const fetchData = async () => {
     try {
-      const q = query(collection(db, 'complaints'), orderBy('createdAt', 'desc'));
+      let q;
+      if (doctorProfile?.role === 'super_admin') {
+        q = query(collection(db, 'complaints'), orderBy('createdAt', 'desc'));
+      } else if (doctorProfile?.clinicId) {
+        q = query(collection(db, 'complaints'), where('clinicId', '==', doctorProfile.clinicId), orderBy('createdAt', 'desc'));
+      } else {
+        // Limited view or default
+        q = query(collection(db, 'complaints'), where('doctorId', '==', auth.currentUser?.uid), orderBy('createdAt', 'desc'));
+      }
+      
       const snap = await getDocs(q);
-      setComplaints(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Complaint)));
+      setComplaints(snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Complaint)));
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'complaints');
     } finally {
@@ -42,8 +64,10 @@ export default function ComplaintsManager() {
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (doctorProfile) {
+      fetchData();
+    }
+  }, [doctorProfile]);
 
   const handleUpdateStatus = async (id: string, newStatus: Complaint['status']) => {
     try {

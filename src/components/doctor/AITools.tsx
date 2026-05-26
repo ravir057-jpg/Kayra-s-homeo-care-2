@@ -1,16 +1,20 @@
 import { useState, useRef } from 'react';
-import { Brain, BookOpen, Lightbulb, MessageSquare, FileScan, Upload, X, FileText, ImageIcon, Copy, FilePlus, Sparkles } from 'lucide-react';
-import { getRepertoryInsights, getAdvancedRepertoryAnalysis, analyzeCase, analyzeMedicalReport, searchMateriaMedica } from '../../lib/gemini';
+import { Brain, BookOpen, Lightbulb, MessageSquare, FileScan, Upload, X, FileText, ImageIcon, Copy, FilePlus, Sparkles, FileBarChart } from 'lucide-react';
+import { getRepertoryInsights, getAdvancedRepertoryAnalysis, analyzeCase, analyzeMedicalReport, searchMateriaMedica, synthesizeSymptomAndLabReport } from '../../lib/gemini';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
+import ReportsAnalytics from './ReportsAnalytics';
 
 import { useLanguage } from '../../lib/i18n';
 
 export default function AITools() {
   const { t } = useLanguage();
-  const [activeTab, setActiveTab] = useState<'repertory' | 'analysis' | 'case' | 'mm' | 'report'>('repertory');
+  const [currentSuite, setCurrentSuite] = useState<'ai' | 'analytics'>('ai');
+  const [activeTab, setActiveTab] = useState<'repertory' | 'analysis' | 'case' | 'mm' | 'report' | 'synthesis'>('repertory');
   const [input, setInput] = useState('');
+  const [glassInput, setGlassInput] = useState('');
+  const [symptomsInput, setSymptomsInput] = useState('');
   const [result, setResult] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ data: string; mimeType: string; name: string; preview?: string } | null>(null);
@@ -43,25 +47,32 @@ export default function AITools() {
     setLoading(true);
     let output = '';
     try {
-      if (activeTab === 'repertory') {
+      if (activeTab === 'synthesis') {
+        if (!glassInput || !symptomsInput) {
+          toast.error("Please provide both inputs");
+          setLoading(false);
+          return;
+        }
+        output = await synthesizeSymptomAndLabReport(glassInput, symptomsInput, "Global Case Synthesis");
+      } else if (activeTab === 'repertory') {
         if (!input) return;
-        output = await getRepertoryInsights(input);
+        output = await getRepertoryInsights(input, "General Repertory Insights");
       } else if (activeTab === 'analysis') {
         if (!input) return;
-        output = await getAdvancedRepertoryAnalysis(input);
+        output = await getAdvancedRepertoryAnalysis(input, "Advanced Clinical Analysis");
       } else if (activeTab === 'case') {
         if (!input) return;
-        output = await analyzeCase(input);
+        output = await analyzeCase(input, "Clinical Case Study");
       } else if (activeTab === 'report') {
         if (!selectedFile) {
           toast.error("Please upload a report first");
           setLoading(false);
           return;
         }
-        output = await analyzeMedicalReport({ data: selectedFile.data, mimeType: selectedFile.mimeType }, input);
+        output = await analyzeMedicalReport({ data: selectedFile.data, mimeType: selectedFile.mimeType }, input, `Diagnostic Report: ${selectedFile.name}`);
       } else if (activeTab === 'mm') {
         if (!input) return;
-        output = await searchMateriaMedica(input);
+        output = await searchMateriaMedica(input, "Materia Medica Research");
       } else {
         output = "Search functionality is coming soon!";
       }
@@ -85,14 +96,55 @@ export default function AITools() {
 
   const clearInput = () => {
     setInput('');
+    setGlassInput('');
+    setSymptomsInput('');
     setSelectedFile(null);
     setResult('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
-    <div className="flex flex-col lg:grid lg:grid-cols-4 gap-4 lg:gap-8 h-full pb-20 lg:pb-0">
+    <div className="space-y-4 lg:space-y-6 h-full flex flex-col pb-20">
+      {/* AI Hub Zone Tab-Switcher */}
+      <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl w-fit border border-slate-200/50 shadow-sm shrink-0">
+        <button
+          onClick={() => setCurrentSuite('ai')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            currentSuite === 'ai'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <Brain size={14} />
+          AI Diagnosis & Insights
+        </button>
+        <button
+          onClick={() => setCurrentSuite('analytics')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            currentSuite === 'analytics'
+              ? 'bg-slate-905 bg-slate-900 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <FileBarChart size={14} />
+          Practice Analytics & Charts
+        </button>
+      </div>
+
+      {currentSuite === 'analytics' ? (
+        <div className="flex-1 overflow-y-auto">
+          <ReportsAnalytics />
+        </div>
+      ) : (
+        <div className="flex flex-col lg:grid lg:grid-cols-4 gap-4 lg:gap-8 h-full pb-20 lg:pb-0">
       <div className="flex flex-row lg:flex-col gap-2 lg:gap-4 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0 scrollbar-hide shrink-0">
+        <ToolButton 
+          active={activeTab === 'synthesis'} 
+          onClick={() => { setActiveTab('synthesis'); clearInput(); }} 
+          icon={Brain} 
+          title="AI Synthesis" 
+          desc="Glass AI + Symptoms" 
+        />
         <ToolButton 
           active={activeTab === 'repertory'} 
           onClick={() => { setActiveTab('repertory'); clearInput(); }} 
@@ -135,14 +187,16 @@ export default function AITools() {
           <div className="flex flex-col gap-0.5">
             <h2 className="text-xs lg:text-xl font-bold text-slate-800 flex items-center gap-2">
               <Sparkles size={14} className="text-indigo-500 lg:hidden" />
-              {activeTab === 'repertory' ? 'Intelligent Repertory' : 
+              {activeTab === 'synthesis' ? 'Clinical & Pathology Synthesis' :
+               activeTab === 'repertory' ? 'Intelligent Repertory' : 
                activeTab === 'analysis' ? 'Advanced Repertory Analyst' : 
                activeTab === 'case' ? 'Clinical Case Analyzer' : 
                activeTab === 'report' ? `${t('diagnostics')} & ${t('report_analyzer')}` : 
                'Materia Medica Master Search'}
             </h2>
             <p className="hidden sm:block text-[9px] lg:text-sm text-slate-500 leading-tight">
-              {activeTab === 'report' ? 'Upload pathology or radiology reports for instant AI analysis.' : 
+              {activeTab === 'synthesis' ? 'Synthesize Glass AI diagnostics and subjective patient symptoms into a classical homeopathic profile.' :
+               activeTab === 'report' ? 'Upload pathology or radiology reports for instant AI analysis.' : 
                activeTab === 'mm' ? 'Searching Allen, Nash, Clarke, Boericke, Kent, and Phatak.' :
                activeTab === 'analysis' ? 'Detailed rubric selection, remedy grading, and miasmatic background.' :
                'Provide symptoms or case details.'}
@@ -150,13 +204,43 @@ export default function AITools() {
           </div>
           <div className="shrink-0 px-2 py-0.5 lg:px-3 lg:py-1 bg-indigo-50 text-indigo-700 rounded-full text-[7px] lg:text-[10px] font-bold uppercase tracking-widest border border-indigo-100 flex items-center gap-1 shadow-sm w-fit">
              <div className="w-1 h-1 lg:w-1.5 lg:h-1.5 bg-indigo-500 rounded-full animate-pulse"></div>
-             Gemini 1.5 Flash
+             Gemini 3.5 Flash
           </div>
         </div>
 
         <div className="flex-1 p-4 lg:p-8 overflow-y-auto space-y-4 lg:space-y-6 scrollbar-hide">
           <AnimatePresence mode="wait">
-            {activeTab === 'report' ? (
+            {activeTab === 'synthesis' ? (
+              <motion.div 
+                key="synthesis-tab"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="grid grid-cols-1 md:grid-cols-2 gap-4"
+              >
+                <div className="flex flex-col space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    1. GLASS AI Output (Conventional Diagnostics & Lab Report)
+                  </label>
+                  <textarea 
+                    value={glassInput}
+                    onChange={(e) => setGlassInput(e.target.value)}
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 min-h-[160px] lg:min-h-[220px] transition-all text-slate-700 placeholder:text-slate-400 text-xs lg:text-base leading-relaxed"
+                    placeholder="Enter conventional diagnostics, lab report values, radiology findings and DDx..."
+                  />
+                </div>
+                <div className="flex flex-col space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    2. Patient Symptoms (Subjective Mentals, Generals, Modalities)
+                  </label>
+                  <textarea 
+                    value={symptomsInput}
+                    onChange={(e) => setSymptomsInput(e.target.value)}
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 min-h-[160px] lg:min-h-[220px] transition-all text-slate-700 placeholder:text-slate-400 text-xs lg:text-base leading-relaxed"
+                    placeholder="Enter subjective physical generals, mental-emotional symptoms, modalities, and miasmatic indications..."
+                  />
+                </div>
+              </motion.div>
+            ) : activeTab === 'report' ? (
               <motion.div 
                 key="report-tab"
                 initial={{ opacity: 0 }}
@@ -230,7 +314,7 @@ export default function AITools() {
           
           <button 
             onClick={handleRun}
-            disabled={loading || (activeTab === 'report' ? !selectedFile : !input)}
+            disabled={loading || (activeTab === 'synthesis' ? (!glassInput || !symptomsInput) : activeTab === 'report' ? !selectedFile : !input)}
             className="w-full py-2.5 lg:py-4 bg-indigo-600 text-white rounded-xl lg:rounded-2xl font-bold text-xs lg:text-lg hover:bg-slate-900 transition-all shadow-xl shadow-indigo-100 disabled:opacity-50 disabled:grayscale active:scale-[0.98] flex items-center justify-center gap-2 lg:gap-3"
           >
             {loading ? (
@@ -282,6 +366,8 @@ export default function AITools() {
         </div>
       </div>
     </div>
+    )}
+  </div>
   );
 }
 

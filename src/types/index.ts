@@ -16,10 +16,55 @@ import {
 } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from "firebase/auth";
 
+export interface Clinic {
+  id: string;
+  name: string;
+  ownerId: string;
+  logoUrl?: string;
+  tagline?: string;
+  description?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  phone?: string;
+  email?: string;
+  whatsappLink?: string; // Section D
+  formspreeId?: string; // Section D
+  subscriptionPlan: "basic" | "pro" | "enterprise";
+  subscriptionStatus: "active" | "inactive" | "trial";
+  subscriptionExpiry: string;
+  // Pricing & Modes (Section E)
+  onlineConsultationFee?: number;
+  physicalConsultationFee?: number;
+  consultationModes?: ("Online" | "Physical")[];
+  // Advanced Features (Section F)
+  aiAnalyzerEnabled?: boolean;
+  preferredLabs?: string[];
+  privacyAgreementAccepted?: boolean;
+  // Slot Management (Section E)
+  businessHours?: {
+    [key: string]: { // e.g. "monday"
+      isOpen: boolean;
+      slots: { start: string; end: string }[];
+      breaks: { start: string; end: string }[];
+    }
+  };
+  settings?: {
+    themeColor?: string;
+    enableAI?: boolean;
+    enableVideo?: boolean;
+    whatsappNumber?: string;
+  };
+  createdAt: string;
+}
+
 export interface Patient {
   id?: string;
   uid?: string;
+  clinicId: string;
   patientId?: string;
+  khcId?: string;
   name: string;
   phone: string;
   mobileNumber?: string;
@@ -39,6 +84,7 @@ export interface Patient {
 
 export interface Appointment {
   id?: string;
+  clinicId: string;
   patientId: string;
   patientUid?: string;
   patientName: string;
@@ -47,10 +93,13 @@ export interface Appointment {
   date: string;
   time: string;
   type: "Online" | "Offline";
-  status: "Scheduled" | "Completed" | "Cancelled" | "scheduled" | "cancelled" | "completed" | "in-progress" | "payment-pending";
+  status: "Scheduled" | "Completed" | "Cancelled" | "scheduled" | "cancelled" | "completed" | "in-progress" | "payment-pending" | "pending";
   reason?: string;
   hasVoiceNote?: boolean;
   videoLink?: string;
+  fee?: number;
+  commissionAmount?: number;
+  doctorNetShare?: number;
   createdAt?: string;
 }
 
@@ -62,6 +111,7 @@ export interface Medication {
 
 export interface Prescription {
   id?: string;
+  clinicId: string;
   patientId: string;
   patientUid?: string;
   doctorId?: string;
@@ -76,6 +126,7 @@ export interface Prescription {
 
 export interface InventoryItem {
   id?: string;
+  clinicId: string;
   name: string;
   category: string;
   stockLevel: number;
@@ -86,11 +137,16 @@ export interface InventoryItem {
 
 export interface Invoice {
   id?: string;
+  clinicId: string;
   patientId: string;
   doctorId?: string;
   appointmentId?: string;
   amount: number;
+  fee?: number;
+  commissionAmount?: number;
+  doctorNetShare?: number;
   status: "Pending" | "Paid" | "Partially Paid" | "Cancelled" | "Refunded" | "Failed";
+  paymentMethod?: string;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   razorpaySignature?: string;
@@ -105,16 +161,35 @@ export interface UserProfile {
   email: string | null;
   photoURL?: string;
   name?: string;
-  role: "doctor" | "patient";
+  role: "doctor" | "patient" | "clinic_admin" | "super_admin";
+  clinicId?: string; // ID of the clinic they belong to
+  ownedClinicId?: string; // For clinic_admin, the ID of the clinic they own
   subscription?: string;
   subscriptionExpiry?: string;
   consultationFee?: number;
   followUpFee?: number;
+  commissionRate?: number;
   specialization?: string;
-  experience?: number;
+  experience?: number; // Total years
   qualification?: string;
   stateBoardRegistrationNumber?: string;
   nchRegistrationNumber?: string;
+  registrationYear?: string;
+  // Personal Profile (Section A)
+  gender?: "Male" | "Female" | "Other";
+  dob?: string;
+  languages?: string[];
+  // Professional Details (Section B)
+  specializations?: string[]; // Multiple categories
+  degreeUrl?: string;
+  registrationCertificateUrl?: string;
+  // Legal & Compliance (Section C)
+  digitalSignatureUrl?: string;
+  identityProofUrl?: string;
+  identityProofType?: "Aadhar" | "PAN" | "VoterID";
+  telemedicineConsent?: boolean;
+  disclaimerAccepted?: boolean;
+  // Metadata
   clinicName?: string;
   clinicAddress?: string;
   city?: string;
@@ -124,6 +199,9 @@ export interface UserProfile {
   isMobileVerified?: boolean;
   isEmailVerified?: boolean;
   isVerified?: boolean;
+  // Onboarding status
+  isOnboarded?: boolean;
+  onboardingStep?: number;
   razorpayKeyId?: string;
   razorpayKeySecret?: string;
   rating?: number;
@@ -141,6 +219,7 @@ export interface Feedback {
   rating: number;
   comment?: string;
   createdAt: string;
+  clinicId?: string;
 }
 
 export interface SymptomLog {
@@ -156,4 +235,26 @@ export interface SymptomLog {
   thirst: string;
   notes?: string;
   createdAt: string;
+}
+
+export interface Report {
+  id?: string;
+  clinicId?: string;
+  patientId: string;
+  patientUid: string;
+  patientName: string;
+  title: string;
+  fileName: string;
+  fileType: string;
+  reportUrl: string;
+  status: "Pending Analysis" | "Analyzed";
+  category: "Radiology" | "Pathology" | "Others";
+  doctorId?: string;
+  summary?: string;
+  findings?: { parameter: string; value: string; result: 'Normal' | 'Abnormal'; reference?: string }[];
+  clinicalGuidance?: string;
+  rubricsSuggested?: string[];
+  fullAnalysis?: string;
+  createdAt: string;
+  analyzedAt?: string;
 }

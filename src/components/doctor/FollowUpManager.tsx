@@ -13,21 +13,27 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { db, handleFirestoreError, OperationType } from '../../lib/db';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { Prescription, Patient } from '../../types';
+import { Prescription, Patient, UserProfile } from '../../types';
 import { format, isAfter, isBefore, startOfDay } from 'date-fns';
 import { toast } from 'sonner';
 
-export default function FollowUpManager() {
+interface FollowUpManagerProps {
+  profile: UserProfile | null;
+}
+
+export default function FollowUpManager({ profile }: FollowUpManagerProps) {
   const [activeTab, setActiveTab] = useState<'pending' | 'completed' | 'overdue'>('pending');
   const [followups, setFollowups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
   const fetchFollowUps = async () => {
+    if (!profile?.clinicId) return;
     setLoading(true);
     try {
       const q = query(
         collection(db, 'prescriptions'),
+        where('clinicId', '==', profile.clinicId),
         where('followupDate', '!=', null),
         orderBy('followupDate', 'asc')
       );
@@ -39,7 +45,10 @@ export default function FollowUpManager() {
       const patientsMap: Record<string, Patient> = {};
       
       if (patientIds.length > 0) {
-        const patientsSnap = await getDocs(collection(db, 'patients'));
+        const patientsSnap = await getDocs(query(
+          collection(db, 'patients'),
+          where('clinicId', '==', profile.clinicId)
+        ));
         patientsSnap.docs.forEach(doc => {
           patientsMap[doc.id] = { id: doc.id, ...doc.data() } as Patient;
         });
@@ -79,7 +88,7 @@ export default function FollowUpManager() {
 
   useEffect(() => {
     fetchFollowUps();
-  }, []);
+  }, [profile]);
 
   const handleMarkDone = async (item: any) => {
     try {

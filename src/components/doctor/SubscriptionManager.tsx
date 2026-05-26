@@ -183,20 +183,20 @@ export default function SubscriptionManager({ profile }: SubscriptionManagerProp
             } ${profile?.subscription === plan.id ? 'border-emerald-500 ring-2 ring-emerald-100' : ''}`}
           >
             {plan.popular && (
-              <div className="absolute top-0 right-0 bg-indigo-500 text-white text-[10px] font-bold px-4 py-1 rounded-bl-xl uppercase tracking-widest">
+              <div className="absolute top-0 right-0 bg-brand-600 text-white text-[10px] font-bold px-4 py-1 rounded-bl-xl uppercase tracking-widest">
                 RECOMMENDED
               </div>
             )}
             
             <div className="flex justify-between items-start mb-6">
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
-                plan.color === 'blue' ? 'bg-blue-50 text-blue-600' : 
-                plan.color === 'emerald' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ${
+                plan.color === 'blue' ? 'bg-indigo-50 text-indigo-600' : 
+                plan.color === 'emerald' ? 'bg-brand-50 text-brand-600' : 'bg-brand-50 text-brand-600'
               }`}>
                 {plan.id === 'basic' ? <Shield size={24} /> : plan.id === 'pro' ? <Zap size={24} /> : <CreditCard size={24} />}
               </div>
               {plan.benefit && (
-                <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-1 rounded-lg border border-emerald-100">
+                <span className="bg-brand-50 text-brand-600 text-[10px] font-bold px-2 py-1 rounded-lg border border-brand-100 shadow-sm">
                   {plan.benefit}
                 </span>
               )}
@@ -226,10 +226,10 @@ export default function SubscriptionManager({ profile }: SubscriptionManagerProp
               disabled={loading || profile?.subscription === plan.id}
               className={`w-full py-3 rounded-2xl text-sm font-bold transition-all active:scale-95 flex items-center justify-center gap-2 ${
                 profile?.subscription === plan.id 
-                  ? 'bg-emerald-500 text-white cursor-default' 
+                  ? 'bg-brand-600 text-white cursor-default' 
                   : plan.popular 
-                    ? 'bg-indigo-600 text-white hover:bg-slate-900 shadow-lg shadow-indigo-100' 
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    ? 'bg-brand-600 text-white hover:bg-slate-900 shadow-xl shadow-brand-100' 
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 shadow-sm'
               }`}
             >
               {loading ? <Clock size={18} className="animate-spin" /> : (

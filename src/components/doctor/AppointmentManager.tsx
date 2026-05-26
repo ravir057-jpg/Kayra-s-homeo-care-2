@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { db, auth, handleFirestoreError, OperationType } from '../../lib/db';
 import { logAction } from '../../lib/audit';
-import { collection, addDoc, getDocs, query, orderBy, doc, updateDoc, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, orderBy, doc, updateDoc, where, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
-import { Appointment, Patient } from '../../types';
+import { Appointment, Patient, UserProfile } from '../../types';
 import { format, parseISO } from 'date-fns';
 import { Calendar, Clock, Video, Home, Plus, X, CheckCircle2, PhoneOutgoing, Search, Pencil, ExternalLink, Copy, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -14,7 +14,7 @@ import { useLanguage } from '../../lib/i18n';
 import { startVideoCall, generateJitsiUrl } from '../../lib/video';
 import VideoMeetingRoom from '../shared/VideoMeetingRoom';
 
-export default function AppointmentManager() {
+export default function AppointmentManager({ profile }: { profile?: any }) {
   const { t } = useLanguage();
   const location = useLocation();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -53,12 +53,23 @@ export default function AppointmentManager() {
   });
 
   const fetchData = async () => {
+    const clinicId = profile?.clinicId;
+    if (!clinicId) return;
+    
     try {
-      const apptsQ = query(collection(db, 'appointments'), orderBy('date', 'asc'));
+      const apptsQ = query(
+        collection(db, 'appointments'), 
+        where('clinicId', '==', clinicId),
+        orderBy('date', 'asc')
+      );
       const apptsSnap = await getDocs(apptsQ);
       setAppointments(apptsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment)));
 
-      const patientsSnap = await getDocs(collection(db, 'patients'));
+      const patientsQ = query(
+        collection(db, 'patients'),
+        where('clinicId', '==', clinicId)
+      );
+      const patientsSnap = await getDocs(patientsQ);
       setPatients(patientsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient)));
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'appointments/patients');
@@ -68,8 +79,13 @@ export default function AppointmentManager() {
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (profile?.clinicId) {
+      fetchData();
+    } else if (profile) {
+      // If profile exists but no clinicId, stop loading
+      setLoading(false);
+    }
+  }, [profile]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,12 +99,14 @@ export default function AppointmentManager() {
         patientName: patient?.name || 'Unknown',
         patientUid: patient?.uid || '',
         doctorId: auth.currentUser?.uid || '',
+        clinicId: profile?.clinicId,
         videoLink
       });
       await logAction({
         action: 'Schedule Appointment',
         entityType: 'Appointment',
         entityId: docRef.id,
+        clinicId: profile?.clinicId,
         details: `Scheduled ${formData.type} visit for ${patient?.name || 'Unknown'} at ${formData.date} ${formData.time}`,
         severity: 'info'
       });
@@ -129,18 +147,21 @@ export default function AppointmentManager() {
         videoLink = '';
       }
 
+      const newStatus = editingAppt.status === 'pending' ? 'Scheduled' : (formData.status || editingAppt.status);
+      
       await updateDoc(doc(db, 'appointments', editingAppt.id), {
         ...formData,
+        status: newStatus,
         patientName: patient?.name || formData.patientName,
         videoLink
       });
       await logAction({
-        action: 'Update Appointment',
+        action: editingAppt.status === 'pending' ? 'Confirm Appointment' : 'Update Appointment',
         entityType: 'Appointment',
         entityId: editingAppt.id,
-        details: `Updated ${formData.type} visit for ${patient?.name || formData.patientName} to ${formData.date} ${formData.time}`
+        details: `${editingAppt.status === 'pending' ? 'Confirmed' : 'Updated'} ${formData.type} visit for ${patient?.name || formData.patientName} to ${formData.date} ${formData.time}`
       });
-      toast.success('Appointment updated');
+      toast.success(editingAppt.status === 'pending' ? 'Appointment confirmed and scheduled' : 'Appointment updated');
       setIsAdding(false);
       setEditingAppt(null);
       fetchData();
@@ -160,14 +181,21 @@ export default function AppointmentManager() {
         if (appt) {
           const user = auth.currentUser;
           const fee = confirmedFee !== undefined ? confirmedFee : 500;
+          const commissionRate = profile?.commissionRate || 10;
+          const commissionAmount = (fee * commissionRate) / 100;
+          const doctorNetShare = fee - commissionAmount;
 
           try {
             await addDoc(collection(db, 'invoices'), {
               patientId: appt.patientId,
               patientUid: appt.patientUid || '',
               doctorId: user?.uid,
+              clinicId: profile?.clinicId,
               appointmentId: id,
               amount: fee,
+              commissionRate,
+              commissionAmount,
+              doctorNetShare,
               status: 'Pending',
               items: [{ description: 'Consultation Fee', price: fee, quantity: 1 }],
               createdAt: new Date().toISOString()
@@ -199,19 +227,7 @@ export default function AppointmentManager() {
     setIsCreatingInvoice(true);
     
     // Predetermine default fee from profile
-    let fee = 500;
-    const user = auth.currentUser;
-    if (user) {
-      try {
-        const docSnap = await getDocs(query(collection(db, 'users'), where('uid', '==', user.uid)));
-        if (!docSnap.empty) {
-          const profile = docSnap.docs[0].data();
-          fee = profile.consultationFee || 500;
-        }
-      } catch (err) {
-        console.error("Error fetching doctor fee:", err);
-      }
-    }
+    const fee = profile?.consultationFee || 500;
     setCustomFee(fee);
   };
 
@@ -257,6 +273,7 @@ export default function AppointmentManager() {
               className="text-xs font-bold text-slate-600 outline-none bg-transparent cursor-pointer"
             >
               <option value="All">All Status</option>
+              <option value="pending">Pending Requests</option>
               <option value="Scheduled">Scheduled</option>
               <option value="Completed">Completed</option>
               <option value="Cancelled">Cancelled</option>
@@ -317,7 +334,8 @@ export default function AppointmentManager() {
                         <div className="flex flex-wrap items-center gap-2 mt-1">
                           <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full tracking-wider shrink-0 ${
                             appt.status === 'Completed' ? 'bg-emerald-50 text-emerald-500' :
-                            appt.status === 'Cancelled' ? 'bg-red-50 text-red-500' : 'bg-orange-50 text-orange-500'
+                            appt.status === 'Cancelled' ? 'bg-red-50 text-red-500' : 
+                            appt.status === 'pending' ? 'bg-indigo-50 text-indigo-500 animate-pulse' : 'bg-orange-50 text-orange-500'
                           }`}>
                             {appt.status}
                           </span>
@@ -371,7 +389,7 @@ export default function AppointmentManager() {
                         onClick={() => handleEdit(appt)}
                         className="flex-1 min-w-[100px] h-[48px] bg-slate-100 text-slate-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-slate-200 transition-all active:scale-95"
                       >
-                        <Pencil size={16} /> EDIT
+                        <Pencil size={16} /> {appt.status === 'pending' ? 'CONFIRM' : 'EDIT'}
                       </button>
                       {appt.type === 'Online' && appt.status === 'Scheduled' && (
                       <button 
@@ -479,7 +497,8 @@ export default function AppointmentManager() {
                         <div className="flex justify-center">
                           <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
                             appt.status === 'Completed' ? 'bg-emerald-50 text-emerald-500' :
-                            appt.status === 'Cancelled' ? 'bg-red-50 text-red-500' : 'bg-orange-50 text-orange-500'
+                            appt.status === 'Cancelled' ? 'bg-red-50 text-red-500' : 
+                            appt.status === 'pending' ? 'bg-indigo-50 text-indigo-500 animate-pulse' : 'bg-orange-50 text-orange-500'
                           }`}>
                             {appt.status}
                           </span>
@@ -508,7 +527,7 @@ export default function AppointmentManager() {
                           <button 
                             onClick={() => handleEdit(appt)}
                             className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 lg:bg-transparent rounded-lg"
-                            title="Edit"
+                            title={appt.status === 'pending' ? 'Confirm Request' : 'Edit'}
                           >
                             <Pencil size={18} />
                           </button>
@@ -569,7 +588,9 @@ export default function AppointmentManager() {
               className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"
             >
               <div className="p-4 lg:p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 overflow-hidden shrink-0">
-                <h2 className="text-lg font-bold text-slate-800">{editingAppt ? 'Edit Appointment' : 'Assign Appointment'}</h2>
+                <h2 className="text-lg font-bold text-slate-800">
+                  {editingAppt?.status === 'pending' ? 'Confirm Booking Request' : (editingAppt ? 'Edit Appointment' : 'Assign Appointment')}
+                </h2>
                 <button onClick={() => {
                   setIsAdding(false);
                   setEditingAppt(null);
@@ -613,9 +634,16 @@ export default function AppointmentManager() {
                     </p>
                   )}
                   {formData.patientName && (
-                    <div className="mt-2 flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-100 animate-in fade-in slide-in-from-top-1">
-                      <CheckCircle2 size={12} />
-                      <span className="text-[10px] font-bold">Selected: {formData.patientName}</span>
+                    <div className="mt-2 flex flex-col gap-2">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-100 animate-in fade-in slide-in-from-top-1">
+                        <CheckCircle2 size={12} />
+                        <span className="text-[10px] font-bold">Selected: {formData.patientName}</span>
+                      </div>
+                      {editingAppt?.status === 'pending' && (
+                        <div className="px-3 py-2 bg-amber-50 rounded-xl border border-amber-100">
+                          <p className="text-[10px] font-bold text-amber-800">Note: Confirming this will mark the appointment as Scheduled and notify the patient.</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -675,7 +703,7 @@ export default function AppointmentManager() {
                 </div>
                 <div className="pt-2 pb-6 sm:pb-0">
                   <button className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl active:scale-95 uppercase tracking-wider text-sm">
-                    {editingAppt ? 'Update Appointment' : (t('finalize_appointment') || 'Finalize Appointment')}
+                    {editingAppt?.status === 'pending' ? 'Confirm & Notify Patient' : (editingAppt ? 'Update Appointment' : (t('finalize_appointment') || 'Finalize Appointment'))}
                   </button>
                 </div>
               </form>

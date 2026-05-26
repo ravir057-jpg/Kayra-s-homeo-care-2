@@ -2,6 +2,7 @@ import { motion } from 'motion/react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Shield, FileText, Lock, Eye, Scale, Send, MessageSquare } from 'lucide-react';
 import Logo from './Logo';
+import Footer from './Footer';
 import { toast } from 'sonner';
 
 export default function LegalPage() {
@@ -171,9 +172,7 @@ export default function LegalPage() {
         </motion.div>
       </div>
 
-      <footer className="py-12 text-center text-slate-400 text-[10px] font-bold uppercase tracking-widest border-t border-slate-100 bg-white">
-        © 2026 Kayra's Homoeo. Care • All Rights Reserved
-      </footer>
+      <Footer />
     </div>
   );
 }

@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../../lib/db';
 import { logAction } from '../../lib/audit';
-import { collection, addDoc, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, updateDoc, query, where, getDocs } from 'firebase/firestore';
 import { toast } from 'sonner';
-import { Prescription, Patient, Medication, UserProfile } from '../../types';
-import { Plus, X, FileDown, Brain, ListPlus, History, MessageCircle, Search } from 'lucide-react';
+import { Prescription, Patient, Medication, UserProfile, InventoryItem } from '../../types';
+import { Plus, X, FileDown, Brain, ListPlus, History, MessageCircle, Search, AlertCircle } from 'lucide-react';
 import { generatePrescriptionPDF } from '../../lib/pdf';
 import { getRepertoryInsights } from '../../lib/gemini';
 import { motion, AnimatePresence } from 'motion/react';
@@ -55,26 +55,33 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
   };
 
   useEffect(() => {
-    const fetchPatients = async () => {
-      try {
-        const snap = await getDocs(collection(db, 'patients'));
-        setPatients(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient)));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, 'patients');
-      }
-    };
-    fetchPatients();
+    if (!profile?.clinicId) return;
 
-    const fetchInventory = async () => {
-      try {
-        const snap = await getDocs(collection(db, 'inventory'));
-        setInventory(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      } catch (error) {
-        console.error("Inventory fetch failed", error);
-      }
+    const qPatients = query(
+      collection(db, 'patients'), 
+      where('clinicId', '==', profile.clinicId)
+    );
+    const unsubscribePatients = onSnapshot(qPatients, (snap) => {
+      setPatients(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'patients');
+    });
+
+    const qInv = query(
+      collection(db, 'inventory'), 
+      where('clinicId', '==', profile.clinicId)
+    );
+    const unsubscribeInv = onSnapshot(qInv, (snap) => {
+      setInventory(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryItem)));
+    }, (error) => {
+      console.error("Inventory fetch failed", error);
+    });
+
+    return () => {
+      unsubscribePatients();
+      unsubscribeInv();
     };
-    fetchInventory();
-  }, []);
+  }, [profile?.clinicId]);
 
   useEffect(() => {
     if (selectedPatientId) {
@@ -100,8 +107,8 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
       if (value.length > 1) {
         const matches = inventory
           .filter(item => item.name.toLowerCase().includes(value.toLowerCase()))
-          .map(item => item.name);
-        setSuggestedMeds(matches);
+          .map(item => ({ name: item.name, stock: item.stockLevel, unit: item.unit }));
+        setSuggestedMeds(matches as any);
         setActiveMedIndex(index);
       } else {
         setSuggestedMeds([]);
@@ -124,7 +131,8 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
       return;
     }
     setIsAiLoading(true);
-    const insights = await getRepertoryInsights(symptoms);
+    const doctorContext = profile ? `Dr. ${profile.name}` : undefined;
+    const insights = await getRepertoryInsights(symptoms, doctorContext);
     await logAction({
       action: 'Run AI Repertory',
       entityType: 'Patient',
@@ -147,6 +155,7 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
         patientId: selectedPatientId,
         patientUid: selectedPatient?.uid,
         doctorId: profile?.uid,
+        clinicId: profile?.clinicId,
         symptoms,
         diagnosis,
         medications,
@@ -163,6 +172,7 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
             patientId: selectedPatientId,
             patientUid: selectedPatient?.uid,
             doctorId: profile?.uid,
+            clinicId: profile?.clinicId,
             amount: profile?.consultationFee || 500,
             status: 'Pending',
             items: [{ description: 'Consultation & Prescription Fee', price: profile?.consultationFee || 500, quantity: 1 }],
@@ -184,11 +194,15 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
 
       // Deduct Stock from Inventory
       try {
-        const inventorySnap = await getDocs(collection(db, 'inventory'));
-        const inventory = inventorySnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+        const q = query(
+          collection(db, 'inventory'),
+          where('clinicId', '==', profile?.clinicId)
+        );
+        const inventorySnap = await getDocs(q);
+        const inventoryItems = inventorySnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
         
         for (const med of medications) {
-          const item = inventory.find(i => i.name.toLowerCase().includes(med.name.toLowerCase()));
+          const item = inventoryItems.find(i => i.name.toLowerCase().includes(med.name.toLowerCase()));
           if (item && item.stockLevel > 0) {
             try {
               const itemRef = doc(db, 'inventory', item.id);
@@ -234,6 +248,7 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
     }
     const prescription: Prescription = {
       patientId: selectedPatientId,
+      clinicId: profile?.clinicId || '',
       symptoms,
       diagnosis,
       medications,
@@ -459,14 +474,20 @@ export default function PrescriptionPad({ profile }: PrescriptionPadProps) {
                             exit={{ opacity: 0, y: -10 }}
                             className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto"
                           >
-                            {suggestedMeds.map((s, i) => (
+                            {suggestedMeds.map((s: any, i) => (
                               <button
                                 key={i}
                                 type="button"
-                                onClick={() => selectSuggestedMed(index, s)}
-                                className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 font-medium transition-colors border-b border-slate-50 last:border-0"
+                                onClick={() => selectSuggestedMed(index, s.name)}
+                                className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0 flex items-center justify-between group"
                               >
-                                {s}
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-bold text-slate-700 group-hover:text-indigo-600">{s.name}</span>
+                                  <span className={`text-[10px] font-bold uppercase tracking-widest ${s.stock < 5 ? 'text-red-500' : 'text-slate-400'}`}>
+                                    {s.stock <= 0 ? 'Out of Stock' : `Stock: ${s.stock} ${s.unit}`}
+                                  </span>
+                                </div>
+                                {s.stock < 5 && <AlertCircle size={14} className="text-red-500" />}
                               </button>
                             ))}
                           </motion.div>

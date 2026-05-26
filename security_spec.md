@@ -1,25 +1,29 @@
-# Security Specification - Kayra's Homeo Care
+# Security Specification - Kayra’s Homeo Care
 
-## 1. Data Invariants
-- An appointment cannot exist without a valid patientId and doctorId.
-- A prescription MUST be linked to an existing appointment and patient.
-- Medical reports containing PII are only accessible to the owner and the doctor.
-- Patient profiles (users collection) can only be created with the user's own UID.
-- Doctors cannot modify patient profile fields like 'mobile' after initial registration.
+## Data Invariants
+1. A patient cannot see other patients' data.
+2. A doctor can only see data from their clinic.
+3. Appointments must belong to a valid clinic and have a status from the allowed set.
+4. Clinic administrators can manage their clinic's staff and inventory.
+5. Invoices can only be created by doctors/admins and viewed by the relevant patient/doctor.
 
-## 2. The "Dirty Dozen" Payloads (Red Team Test Cases)
-1. **Identity Spoofing**: Attempt to create a document in `users/` with a `uid` that doesn't match `request.auth.uid`.
-2. **PII Leak**: Authenticated Patient A attempts to `get` the profile of Patient B.
-3. **Ghost Field Update**: Authenticated Patient attempts to update their own profile with `isAdmin: true` or `isVerified: true`.
-4. **Orphaned Prescription**: Attempt to create a prescription without a valid `appointmentId` (using `exists()`).
-5. **Role Escalation**: Patient attempts to write a document to the `doctors/` collection.
-6. **Update Gap**: Patient attempts to change the `fees` or `qualification` in a doctor's profile.
-7. **Resource Poisoning**: Attempt to create an appointment with an ID that is 2KB long or contains dangerous characters.
-8. **State Shortcut**: Patient attempts to update an appointment status directly from `pending` to `completed` (this should be doctor-only).
-9. **Timestamp Spoofing**: Attempt to create an appointment with a `createdAt` date in the future (not using `request.time`).
-10. **Shadow Field**: Doctor attempts to add a `hiddenNote` field to the patient profile that isn't in the schema.
-11. **Total Array Poisoning**: Attempt to inject 10,000 items into the `medicines` array of a prescription.
-12. **Recursive List Query**: Patient attempts to list ALL prescriptions without a `where` filter on `patientId`.
+## The "Dirty Dozen" Payloads
+1. **Identity Spoofing**: Attempt to create an appointment with another doctor's ID.
+2. **Clinic Hopping**: Attempt to fetch appointments for a `clinicId` the user does not belong to.
+3. **Role Escalation**: Attempt to update own user profile to `role: 'super_admin'`.
+4. **PII Leak**: A patient attempting to list all `users` to find other patients' emails.
+5. **Inventory Theft**: A patient attempting to update medication prices.
+6. **Appointment Hijacking**: A patient attempting to change the `status` of their own appointment to 'Completed' without paying.
+7. **Report Poisoning**: A doctor from clinic A attempting to view medical reports of clinic B.
+8. **Malicious ID**: Attempting to create a document with a 1MB string as ID.
+9. **Shadow Fields**: Attempting to add `isAdmin: true` to a patient profile.
+10. **State Shortcut**: Moving an appointment from 'Scheduled' to 'Completed' without an `updatedAt` timestamp.
+11. **PII Blanket Read**: Authenticated user calling `getDocs(collection(db, 'users'))` without filters.
+12. **Orphaned Record**: Creating a prescription for a non-existent patient ID.
 
-## 3. Test Runner Concept
-The tests will ensure that each of these malicious payloads returns `PERMISSION_DENIED`.
+## Test Runner (Logic Overview)
+The `firestore.rules` will be verified against these scenarios using logical assertions in the match blocks.
+- `isValidId()` for path hardening.
+- `isValidAppointment()` for schema integrity.
+- `isSameClinic()` for tenant isolation.
+- `affectedKeys().hasOnly()` for controlled updates.

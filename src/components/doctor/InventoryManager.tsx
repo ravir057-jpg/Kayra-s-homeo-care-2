@@ -1,21 +1,30 @@
 import { useState, useEffect } from 'react';
 import { db } from '../../lib/db';
 import { logAction } from '../../lib/audit';
-import { collection, getDocs, addDoc, updateDoc, doc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, orderBy, where } from 'firebase/firestore';
 import { toast } from 'sonner';
-import { InventoryItem } from '../../types';
-import { Package, Plus, Search, AlertTriangle, ArrowUpRight, ArrowDownRight, Edit3, Trash2, X } from 'lucide-react';
+import { InventoryItem, UserProfile } from '../../types';
+import { Package, Plus, Search, AlertTriangle, ArrowUpRight, ArrowDownRight, Edit3, Trash2, X, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
+import { auth, handleFirestoreError, OperationType } from '../../lib/db';
 
 import { useLanguage } from '../../lib/i18n';
 
-export default function InventoryManager() {
+interface InventoryManagerProps {
+  profile: UserProfile | null;
+}
+
+export default function InventoryManager({ profile }: InventoryManagerProps) {
   const { t } = useLanguage();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState('All');
+
+  const categories = ['All', 'Remedy', 'Tincture', 'Bio-Comb', 'Supplements'];
 
   const [formData, setFormData] = useState<Partial<InventoryItem>>({
     name: '',
@@ -25,44 +34,63 @@ export default function InventoryManager() {
     price: 0
   });
 
-  const fetchData = async () => {
-    try {
-      const q = query(collection(db, 'inventory'), orderBy('name', 'asc'));
-      const snap = await getDocs(q);
-      setItems(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryItem)));
-    } catch (error) {
-      toast.error('Failed to load inventory');
-    }
-  };
-
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (!profile?.clinicId) return;
+
+    setLoading(true);
+    const q = query(
+      collection(db, 'inventory'), 
+      where('clinicId', '==', profile.clinicId),
+      orderBy('name', 'asc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setItems(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryItem)));
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'inventory');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [profile?.clinicId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!profile?.clinicId) {
+      toast.error('Clinic identification missing');
+      return;
+    }
+
     try {
-      if (editingItem) {
-        await updateDoc(doc(db, 'inventory', editingItem.id!), {
-          ...formData,
-          lastUpdated: new Date().toISOString()
-        });
+      // Data Sanitization: Remove internal fields if they exist in formData
+      const { id: _, clinicId: __, ...updateData } = formData as any;
+      
+      const payload = {
+        ...updateData,
+        lastUpdated: new Date().toISOString()
+      };
+
+      if (editingItem && editingItem.id) {
+        await updateDoc(doc(db, 'inventory', editingItem.id), payload);
         await logAction({
           action: 'Update Inventory Item',
           entityType: 'Inventory',
           entityId: editingItem.id,
+          clinicId: profile.clinicId,
           details: `Updated ${formData.name} details`
         });
         toast.success('Stock updated');
       } else {
         const docRef = await addDoc(collection(db, 'inventory'), {
-          ...formData,
-          lastUpdated: new Date().toISOString()
+          ...payload,
+          clinicId: profile.clinicId
         });
         await logAction({
           action: 'Add Inventory Item',
           entityType: 'Inventory',
           entityId: docRef.id,
+          clinicId: profile.clinicId,
           details: `Added ${formData.name} to pharmacy`
         });
         toast.success('Item added to inventory');
@@ -70,35 +98,39 @@ export default function InventoryManager() {
       setIsAdding(false);
       setEditingItem(null);
       setFormData({ name: '', category: 'Remedy', stockLevel: 0, unit: 'Bottles', price: 0 });
-      fetchData();
     } catch (error) {
-      toast.error('Save failed');
+      handleFirestoreError(error, editingItem ? OperationType.UPDATE : OperationType.CREATE, 'inventory');
+      toast.error('Save failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 
   const updateStock = async (id: string, current: number, delta: number) => {
+    if (!profile?.clinicId) return;
     try {
       const newStock = Math.max(0, current + delta);
-      await updateDoc(doc(db, 'inventory', id), {
+      await updateDoc(doc(db, 'inventory', id), id ? {
         stockLevel: newStock,
         lastUpdated: new Date().toISOString()
-      });
+      } : {});
       await logAction({
         action: 'Update Stock Level',
         entityType: 'Inventory',
         entityId: id,
+        clinicId: profile.clinicId,
         details: `Stock level changed from ${current} to ${newStock}`
       });
-      fetchData();
     } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'inventory');
       toast.error('Failed to update stock');
     }
   };
 
-  const filteredItems = items.filter(item => 
-    item.name.toLowerCase().includes(search.toLowerCase()) || 
-    item.category.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredItems = items.filter(item => {
+    const matchesSearch = item.name.toLowerCase().includes(search.toLowerCase()) || 
+                         item.category.toLowerCase().includes(search.toLowerCase());
+    const matchesCategory = categoryFilter === 'All' || item.category === categoryFilter;
+    return matchesSearch && matchesCategory;
+  });
 
   const lowStockCount = items.filter(i => i.stockLevel < 5).length;
 
@@ -106,23 +138,32 @@ export default function InventoryManager() {
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="Search medicines..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-10 py-3 sm:py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm"
-            />
-            {search && (
-              <button 
-                onClick={() => setSearch('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full"
-              >
-                <X size={14} />
-              </button>
-            )}
+          <div className="flex flex-col sm:flex-row gap-3 flex-1">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="text" 
+                placeholder="Search medicines..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-10 pr-10 py-3 sm:py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm"
+              />
+              {search && (
+                <button 
+                  onClick={() => setSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            <select 
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="px-4 py-3 sm:py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-bold text-slate-600"
+            >
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
           <button 
             onClick={() => setIsAdding(true)}
@@ -167,14 +208,18 @@ export default function InventoryManager() {
                   <button 
                     onClick={async () => {
                       if(confirm('Delete from inventory?')) {
-                        await deleteDoc(doc(db, 'inventory', item.id!));
-                        await logAction({
-                          action: 'Delete Inventory Item',
-                          entityType: 'Inventory',
-                          entityId: item.id,
-                          details: `Removed ${item.name}`
-                        });
-                        fetchData();
+                        try {
+                          await deleteDoc(doc(db, 'inventory', item.id!));
+                          await logAction({
+                            action: 'Delete Inventory Item',
+                            entityType: 'Inventory',
+                            entityId: item.id,
+                            clinicId: profile?.clinicId,
+                            details: `Removed ${item.name}`
+                          });
+                        } catch (error) {
+                          handleFirestoreError(error, OperationType.DELETE, 'inventory');
+                        }
                       }
                     }}
                     className="tap-target text-slate-400 hover:text-red-600 active:bg-red-50 rounded-xl"
@@ -271,14 +316,18 @@ export default function InventoryManager() {
                      <button 
                        onClick={async () => {
                          if(confirm('Delete from inventory?')) {
-                           await deleteDoc(doc(db, 'inventory', item.id!));
-                           await logAction({
-                             action: 'Delete Inventory Item',
-                             entityType: 'Inventory',
-                             entityId: item.id,
-                             details: `Removed ${item.name}`
-                           });
-                           fetchData();
+                           try {
+                             await deleteDoc(doc(db, 'inventory', item.id!));
+                             await logAction({
+                               action: 'Delete Inventory Item',
+                               entityType: 'Inventory',
+                               entityId: item.id,
+                               clinicId: profile?.clinicId,
+                               details: `Removed ${item.name}`
+                             });
+                           } catch (error) {
+                             handleFirestoreError(error, OperationType.DELETE, 'inventory');
+                           }
                          }
                        }}
                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
@@ -351,7 +400,7 @@ export default function InventoryManager() {
                       type="number"
                       required
                       value={formData.stockLevel}
-                      onChange={e => setFormData({ ...formData, stockLevel: parseInt(e.target.value) })}
+                      onChange={e => setFormData({ ...formData, stockLevel: parseInt(e.target.value) || 0 })}
                       className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500"
                     />
                   </div>
@@ -361,7 +410,7 @@ export default function InventoryManager() {
                       type="number"
                       required
                       value={formData.price}
-                      onChange={e => setFormData({ ...formData, price: parseInt(e.target.value) })}
+                      onChange={e => setFormData({ ...formData, price: parseInt(e.target.value) || 0 })}
                       className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500"
                     />
                   </div>

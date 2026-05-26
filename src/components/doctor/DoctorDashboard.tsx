@@ -11,7 +11,9 @@ import {
   Star,
   MessageSquare,
   Award,
-  Video
+  Video,
+  MessageCircle,
+  ShieldHalf
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -28,7 +30,7 @@ import {
 import { collection, query, getDocs, limit, orderBy, where } from 'firebase/firestore';
 import { db, auth, OperationType, handleFirestoreError } from '../../lib/db';
 import { format } from 'date-fns';
-import { Feedback } from '../../types';
+import { Feedback, UserProfile } from '../../types';
 import { getDashboardStats, getRevenueChartData } from '../../services/analyticsService';
 
 const data = [
@@ -43,7 +45,7 @@ const data = [
 
 import { useLanguage } from '../../lib/i18n';
 
-export default function DoctorDashboard() {
+export default function DoctorDashboard({ profile }: { profile?: any }) {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [stats, setStats] = useState<any>({
@@ -64,26 +66,33 @@ export default function DoctorDashboard() {
   const [upcomingAppts, setUpcomingAppts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [smartInsights, setSmartInsights] = useState<any[]>([]);
+
   useEffect(() => {
     const fetchDashboardData = async () => {
       const user = auth.currentUser;
-      if (!user) return;
+      if (!user || !profile) return;
 
       try {
+        const clinicId = profile?.clinicId;
+        setLoading(true);
+
         const [dashboardStats, revenueData] = await Promise.all([
-          getDashboardStats(user.uid),
-          getRevenueChartData(user.uid)
+          getDashboardStats(user.uid, clinicId),
+          getRevenueChartData(user.uid, clinicId)
         ]);
 
         // Get low stock count
         let lowStockCount = 0;
         const stockPath = 'inventory';
         try {
-          const stockSnap = await getDocs(collection(db, stockPath));
+          const stockQ = clinicId 
+            ? query(collection(db, stockPath), where('clinicId', '==', clinicId))
+            : query(collection(db, stockPath), where('doctorId', '==', user.uid));
+          const stockSnap = await getDocs(stockQ);
           lowStockCount = stockSnap.docs.filter(d => d.data().stockLevel < 5).length;
         } catch (e) {
-          console.warn("Inventory fetch failed (likely no inventory yet):", e);
-          // Don't throw, just use 0 as default
+          console.warn("Inventory fetch failed:", e);
         }
 
         setStats({
@@ -93,32 +102,43 @@ export default function DoctorDashboard() {
         setChartData(revenueData);
 
         // Fetch Recent Feedbacks
-        const feedbackQ = query(
-          collection(db, 'feedbacks'),
-          where('doctorId', '==', user.uid),
-          orderBy('createdAt', 'desc'),
-          limit(3)
-        );
+        const feedbackQ = clinicId
+          ? query(collection(db, 'feedbacks'), where('clinicId', '==', clinicId), orderBy('createdAt', 'desc'), limit(3))
+          : query(collection(db, 'feedbacks'), where('doctorId', '==', user.uid), orderBy('createdAt', 'desc'), limit(3));
+        
         try {
           const fbSnap = await getDocs(feedbackQ);
           setRecentFeedbacks(fbSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Feedback)));
         } catch (e) {
-          const fallbackQ = query(collection(db, 'feedbacks'), where('doctorId', '==', user.uid), limit(3));
+          // Fallback if index missing or other error
+          const fallbackQ = clinicId
+            ? query(collection(db, 'feedbacks'), where('clinicId', '==', clinicId), limit(3))
+            : query(collection(db, 'feedbacks'), where('doctorId', '==', user.uid), limit(3));
           const fbSnap = await getDocs(fallbackQ);
           setRecentFeedbacks(fbSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Feedback)));
         }
 
         // Fetch Upcoming Appointments
-        const now = new Date().toISOString();
-        const apptQ = query(
-          collection(db, 'appointments'),
-          where('doctorId', '==', user.uid),
-          where('status', '==', 'Confirmed'),
-          orderBy('date', 'asc'),
-          limit(3)
-        );
+        const apptQ = clinicId
+          ? query(collection(db, 'appointments'), where('clinicId', '==', clinicId), where('status', '==', 'Confirmed'), orderBy('date', 'asc'), limit(3))
+          : query(collection(db, 'appointments'), where('doctorId', '==', user.uid), where('status', '==', 'Confirmed'), orderBy('date', 'asc'), limit(3));
         const apptSnap = await getDocs(apptQ);
         setUpcomingAppts(apptSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        // Fetch Smart Insights (Analyzed Medical Reports)
+        const reportsQ = query(
+          collection(db, 'medical_reports'),
+          where('doctorId', '==', user.uid),
+          where('status', '==', 'Analyzed'),
+          orderBy('analyzedAt', 'desc'),
+          limit(2)
+        );
+        try {
+          const reportsSnap = await getDocs(reportsQ);
+          setSmartInsights(reportsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        } catch (e) {
+          console.warn("Could not fetch reports for insights:", e);
+        }
 
         // Fetch Recent Activity (Prescriptions + Invoices)
         const presQ = query(collection(db, 'prescriptions'), where('doctorId', '==', user.uid), orderBy('createdAt', 'desc'), limit(2));
@@ -193,24 +213,26 @@ export default function DoctorDashboard() {
       </div>
 
       {/* Quick Actions */}
-      <div className="flex flex-col lg:flex-row gap-4 items-center bg-white p-5 sm:p-6 rounded-3xl border border-slate-200 shadow-sm">
-        <div className="flex-1 w-full">
+      <div className="flex flex-col lg:flex-row gap-4 items-center bg-white p-5 sm:p-6 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-24 h-24 bg-brand-50 rounded-full blur-3xl -mr-12 -mt-12"></div>
+        <div className="flex-1 w-full relative z-10">
           <h3 className="text-lg font-bold text-slate-800">Practice Hub</h3>
           <p className="text-xs text-slate-500 font-medium tracking-tight">Streamline your daily clinical flow</p>
         </div>
-        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 w-full lg:w-auto">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 w-full lg:w-auto relative z-10">
+          <button 
+            onClick={() => window.open('https://wa.me/919153000000?text=Hello Kayra Support, I need assistance with my doctor panel.', '_blank')}
+            className="flex items-center gap-2 sm:gap-3 px-4 sm:px-8 py-3.5 sm:py-4 bg-brand-600 text-white rounded-xl sm:rounded-2xl text-[10px] sm:text-[11px] font-bold uppercase tracking-widest hover:bg-brand-500 transition-all shadow-xl active:scale-95 group justify-center sm:justify-start"
+          >
+            <MessageCircle size={16} />
+            <span className="truncate">Support</span>
+          </button>
           <button 
             onClick={() => navigate('/video')}
             className="flex items-center gap-2 sm:gap-3 px-4 sm:px-8 py-3.5 sm:py-4 bg-slate-900 text-white rounded-xl sm:rounded-2xl text-[10px] sm:text-[11px] font-bold uppercase tracking-widest hover:bg-brand-600 transition-all shadow-xl active:scale-95 group justify-center sm:justify-start"
           >
             <Video size={16} className="sm:size-4.5" />
             <span className="truncate">Video Call</span>
-          </button>
-          <button 
-            onClick={() => navigate('/prescriptions')}
-            className="flex items-center gap-2 sm:gap-3 px-4 sm:px-8 py-3.5 sm:py-4 bg-white border border-slate-200 text-slate-700 rounded-xl sm:rounded-2xl text-[10px] sm:text-[11px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all active:scale-95 justify-center sm:justify-start shadow-sm"
-          >
-            <span>Script Pad</span>
           </button>
         </div>
       </div>
@@ -247,27 +269,53 @@ export default function DoctorDashboard() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </div>
-
-        <div className="bg-slate-900 rounded-3xl p-6 md:p-8 text-white flex flex-col shadow-2xl shadow-slate-200 relative overflow-hidden h-full group transition-all hover:scale-[1.01]">
+        </div>        <div className="bg-slate-900 rounded-3xl p-6 md:p-8 text-white flex flex-col shadow-2xl shadow-slate-200 relative overflow-hidden h-full group transition-all hover:scale-[1.01]">
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center shadow-lg shadow-brand-500/20">
+              <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center shadow-lg shadow-brand-600/20">
                 <BrainCircuit size={16} className="text-white" />
               </div>
-              <span className="font-bold uppercase tracking-[0.2em] text-[10px] text-brand-400">Gemini Clinical Engine</span>
+              <span className="font-bold uppercase tracking-[0.2em] text-[10px] text-brand-400">Smart Insights</span>
             </div>
-            <h4 className="text-xl font-bold leading-tight mb-3 tracking-tight">Prescription Precision</h4>
-            <p className="text-slate-400 text-sm mb-8 leading-relaxed font-medium">Lycopodium match detected for Case #2401 based on 4PM aggravation patterns.</p>
-            <div className="space-y-4">
-              <div className="bg-white/5 rounded-2xl p-4 text-[11px] border border-white/5 backdrop-blur-sm">
-                <span className="text-brand-400 font-bold uppercase tracking-widest text-[9px]">Healing Insight</span>
-                <p className="mt-2 text-slate-300 leading-relaxed font-medium italic">Consider intercurrent remedy for miasmatic block in chronic progression.</p>
+            <h4 className="text-xl font-bold leading-tight mb-3 tracking-tight flex items-center gap-2">
+              Clinical Intelligence 
+              <span className="animate-pulse w-2 h-2 bg-brand-500 rounded-full" />
+            </h4>
+            
+            {smartInsights.length > 0 ? (
+              <div className="space-y-4">
+                {smartInsights.map((insight) => (
+                  <div key={insight.id} className="bg-white/5 rounded-2xl p-4 text-[11px] border border-white/5 backdrop-blur-sm group/item hover:bg-white/10 transition-colors">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-brand-400 font-black uppercase tracking-widest text-[8px]">{insight.patientName}</span>
+                      <span className="text-[8px] text-slate-500 font-bold uppercase">{insight.category}</span>
+                    </div>
+                    <p className="text-slate-300 leading-relaxed font-medium line-clamp-3 italic">
+                      "{insight.summary}"
+                    </p>
+                  </div>
+                ))}
+                <button 
+                  onClick={() => navigate('/patients')}
+                  className="w-full py-4 bg-brand-600 text-white rounded-2xl text-[11px] font-bold hover:bg-brand-500 transition-all uppercase tracking-[0.2em] shadow-xl shadow-brand-900/40 active:scale-95 leading-none"
+                >
+                  Detail View
+                </button>
               </div>
-              <button className="w-full py-4 bg-brand-500 text-white rounded-2xl text-[11px] font-bold hover:bg-brand-400 transition-all uppercase tracking-[0.2em] shadow-xl shadow-brand-900/40 active:scale-95 leading-none">
-                Repertory Sync
-              </button>
-            </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-white/5 rounded-2xl p-4 text-[11px] border border-white/5 backdrop-blur-sm">
+                  <span className="text-brand-400 font-bold uppercase tracking-widest text-[9px]">Awaiting Data</span>
+                  <p className="mt-2 text-slate-300 leading-relaxed font-medium italic">No recent Analyzed Reports found. Insights will appear here once patient reports are uploaded and analyzed.</p>
+                </div>
+                <button 
+                  onClick={() => navigate('/patients')}
+                  className="w-full py-4 bg-brand-600 text-white rounded-2xl text-[11px] font-bold hover:bg-brand-500 transition-all uppercase tracking-[0.2em] shadow-xl shadow-brand-900/40 active:scale-95 leading-none"
+                >
+                  Open Patient List
+                </button>
+              </div>
+            )}
           </div>
           <div className="absolute top-0 right-0 w-32 h-32 bg-brand-500/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-1000"></div>
         </div>

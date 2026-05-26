@@ -49,6 +49,7 @@ import VideoConsultation from './components/doctor/VideoConsultation';
 import FollowUpManager from './components/doctor/FollowUpManager';
 import ReportsAnalytics from './components/doctor/ReportsAnalytics';
 import DoctorSettings from './components/doctor/DoctorSettings';
+import QuickBillModal from './components/doctor/QuickBillModal';
 import PatientPortal from './components/patient/PatientPortal';
 import PatientSplashScreen from './components/patient/PatientSplashScreen';
 import PatientOTPLogin from './components/patient/PatientOTPLogin';
@@ -62,12 +63,22 @@ import DoctorLogin from './components/auth/DoctorLogin';
 import PatientLogin from './components/auth/PatientLogin';
 import PatientRegistration from './components/auth/PatientRegistration';
 import ClinicRegistration from './components/auth/ClinicRegistration';
+import SuperAdminDashboard from './components/admin/SuperAdminDashboard';
+import ClinicAdminDashboard from './components/admin/ClinicAdminDashboard';
+import DoctorOnboarding from './components/doctor/DoctorOnboarding';
 import { UserProfile as GlobalUserProfile } from './types';
 
 // Helper Components for Role-based Routing
 function DoctorRoute({ profile, children }: { profile: GlobalUserProfile | null, children: React.ReactNode }) {
   if (!profile) return <Navigate to="/login" />;
-  if (profile.role !== 'doctor') return <Navigate to="/portal" />;
+  if (profile.role !== 'doctor' && profile.role !== 'clinic_admin' && profile.role !== 'super_admin') return <Navigate to="/portal" />;
+  return <>{children}</>;
+}
+
+function AdminRoute({ profile, children, requiredRole }: { profile: GlobalUserProfile | null, children: React.ReactNode, requiredRole?: 'clinic_admin' | 'super_admin' }) {
+  if (!profile) return <Navigate to="/login" />;
+  if (requiredRole && profile.role !== requiredRole) return <Navigate to="/" />;
+  if (profile.role !== 'clinic_admin' && profile.role !== 'super_admin') return <Navigate to="/" />;
   return <>{children}</>;
 }
 
@@ -87,6 +98,55 @@ function ScrollRestoration() {
   }, [pathname]);
 
   return null;
+}
+
+// Helpers and Types for Hardened Firestore Error Tracking conforming to Security guidelines
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+  LISTEN = 'listen',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  return errInfo;
 }
 
 export default function App() {
@@ -121,41 +181,107 @@ function AppContent() {
     };
     testConnection();
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
-        // Try getting profile from users collection first
-        const userRef = doc(db, 'users', user.uid);
-        const unsubProfile = onSnapshot(userRef, async (docSnap) => {
-          if (docSnap.exists()) {
-            setProfile(docSnap.data() as GlobalUserProfile);
-            setLoading(false);
-          } else {
-            // If not in users, check patients collection (for patients logged in via KHC-ID)
-            const patientQ = query(collection(db, 'patients'), where('uid', '==', user.uid));
-            const patientSnap = await getDocs(patientQ);
+    let activeUnsubscribe: (() => void) | null = null;
+    let retryTimeoutId: any = null;
+
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      
+      // Clean up previous user subscriptions/timers immediately
+      if (activeUnsubscribe) {
+        activeUnsubscribe();
+        activeUnsubscribe = null;
+      }
+      if (retryTimeoutId) {
+        clearTimeout(retryTimeoutId);
+        retryTimeoutId = null;
+      }
+
+      if (currentUser) {
+        let attempt = 0;
+        const maxAttempts = 6;
+        const baseDelay = 1000; // start at 1s
+
+        const startSubscriptionWatch = () => {
+          const userRef = doc(db, 'users', currentUser.uid);
+          
+          activeUnsubscribe = onSnapshot(userRef, async (docSnap) => {
+            // Success: Reset attempt count upon receiving a valid snap
+            attempt = 0;
             
-            if (!patientSnap.empty) {
-              const pData = patientSnap.docs[0].data();
-              setProfile({
-                uid: user.uid,
-                email: pData.email || null,
-                name: pData.name,
-                role: 'patient',
-                createdAt: pData.createdAt
-              } as GlobalUserProfile);
+            if (docSnap.exists()) {
+              setProfile(docSnap.data() as GlobalUserProfile);
+              setLoading(false);
             } else {
-              setProfile(null);
+              // If not in users, check patients collection (for patients logged in via KHC-ID)
+              try {
+                const patientQ = query(collection(db, 'patients'), where('uid', '==', currentUser.uid));
+                const patientSnap = await getDocs(patientQ);
+                
+                if (!patientSnap.empty) {
+                  const pData = patientSnap.docs[0].data();
+                  setProfile({
+                    uid: currentUser.uid,
+                    email: pData.email || null,
+                    name: pData.name,
+                    role: 'patient',
+                    createdAt: pData.createdAt
+                  } as GlobalUserProfile);
+                } else {
+                  setProfile(null);
+                }
+                setLoading(false);
+              } catch (patientError: any) {
+                console.error("Failed to query patient catalog:", patientError);
+                handleFirestoreError(patientError, OperationType.LIST, 'patients');
+                
+                // If query fails with permission-denied, let the retry handler kick in if bounds permit
+                if (patientError?.code === 'permission-denied' && attempt < maxAttempts) {
+                  scheduleRetry();
+                } else {
+                  setProfile(null);
+                  setLoading(false);
+                }
+              }
             }
-            setLoading(false);
-          }
-        }, (error) => {
-          console.error("Error watching user profile:", error);
-          setLoading(false);
-        });
-        return () => {
-          unsubProfile();
+          }, (snapError: any) => {
+            handleFirestoreError(snapError, OperationType.LISTEN, `users/${currentUser.uid}`);
+            
+            const isPermissionError = snapError?.code === 'permission-denied' || 
+                                      snapError?.message?.toLowerCase().includes('permission') ||
+                                      snapError?.message?.toLowerCase().includes('insufficient');
+
+            if (isPermissionError && attempt < maxAttempts) {
+              scheduleRetry();
+            } else {
+              console.error("Exhausted retries or experienced severe profile registration check error.");
+              toast.error("Profile authorization pending. If this persists, please contact support.");
+              setLoading(false);
+            }
+          });
         };
+
+        const scheduleRetry = () => {
+          attempt++;
+          const nextInterval = Math.min(baseDelay * Math.pow(2, attempt), 15000) + Math.random() * 300;
+          console.warn(`[Profile Subscription Retry ${attempt}/${maxAttempts}] Propagation delay or authorization lapse. Attempting recovery in ${Math.round(nextInterval)}ms...`);
+          
+          if (activeUnsubscribe) {
+            activeUnsubscribe();
+            activeUnsubscribe = null;
+          }
+
+          retryTimeoutId = setTimeout(() => {
+            // Verify current active user session matches
+            if (auth.currentUser?.uid === currentUser.uid) {
+              startSubscriptionWatch();
+            }
+          }, nextInterval);
+        };
+
+        // Initialize connection
+        startSubscriptionWatch();
+
       } else {
         // Even if no Firebase User, check for local patient session (KHC-ID login)
         const sessionStr = localStorage.getItem('kayra_patient_session');
@@ -177,7 +303,16 @@ function AppContent() {
         setLoading(false);
       }
     });
-    return unsubscribe;
+
+    return () => {
+      unsubscribe();
+      if (activeUnsubscribe) {
+        activeUnsubscribe();
+      }
+      if (retryTimeoutId) {
+        clearTimeout(retryTimeoutId);
+      }
+    };
   }, []);
 
   const isMfaVerified = sessionStorage.getItem('doctor_mfa_verified') === 'true';
@@ -200,10 +335,16 @@ function AppContent() {
   const getRedirectPath = () => {
     if (!user) return null;
     if (!profile) return null; // Wait for profile or stay on current page if it handles null profile
+    if (profile.role === 'super_admin') return '/super-admin';
+    if (profile.role === 'clinic_admin') return '/clinic-admin';
     return profile.role === 'doctor' ? '/dashboard' : '/portal';
   };
 
   const redirectPath = getRedirectPath();
+
+  if (user && profile && profile.role === 'doctor' && !profile.isOnboarded) {
+    return <DoctorOnboarding user={profile} onComplete={() => window.location.reload()} />;
+  }
 
   return (
     <Router>
@@ -226,19 +367,21 @@ function AppContent() {
             user ? (
               <Layout user={user} profile={profile}>
                 <Routes>
-                  <Route path="/dashboard" element={<DoctorRoute profile={profile}><DoctorDashboard /></DoctorRoute>} />
-                  <Route path="/patients" element={<DoctorRoute profile={profile}><PatientManager /></DoctorRoute>} />
-                  <Route path="/appointments" element={<DoctorRoute profile={profile}><AppointmentManager /></DoctorRoute>} />
+                  <Route path="/super-admin" element={<AdminRoute profile={profile} requiredRole="super_admin"><SuperAdminDashboard /></AdminRoute>} />
+                  <Route path="/clinic-admin" element={<AdminRoute profile={profile} requiredRole="clinic_admin"><ClinicAdminDashboard profile={profile} /></AdminRoute>} />
+                  <Route path="/dashboard" element={<DoctorRoute profile={profile}><DoctorDashboard profile={profile} /></DoctorRoute>} />
+                  <Route path="/patients" element={<DoctorRoute profile={profile}><PatientManager profile={profile} /></DoctorRoute>} />
+                  <Route path="/appointments" element={<DoctorRoute profile={profile}><AppointmentManager profile={profile} /></DoctorRoute>} />
                   <Route path="/prescriptions" element={<DoctorRoute profile={profile}><PrescriptionPad profile={profile} /></DoctorRoute>} />
-                  <Route path="/inventory" element={<DoctorRoute profile={profile}><InventoryManager /></DoctorRoute>} />
+                  <Route path="/inventory" element={<DoctorRoute profile={profile}><InventoryManager profile={profile} /></DoctorRoute>} />
                   <Route path="/billing" element={<DoctorRoute profile={profile}><BillingManager profile={profile} /></DoctorRoute>} />
-                  <Route path="/doctors" element={<DoctorRoute profile={profile}><DoctorManager /></DoctorRoute>} />
+                  <Route path="/doctors" element={<DoctorRoute profile={profile}><DoctorManager profile={profile} /></DoctorRoute>} />
                   <Route path="/ai-tools" element={<DoctorRoute profile={profile}><AITools /></DoctorRoute>} />
                   <Route path="/video" element={<DoctorRoute profile={profile}><VideoConsultation /></DoctorRoute>} />
-                  <Route path="/follow-up" element={<DoctorRoute profile={profile}><FollowUpManager /></DoctorRoute>} />
+                  <Route path="/follow-up" element={<DoctorRoute profile={profile}><FollowUpManager profile={profile} /></DoctorRoute>} />
                   <Route path="/reports" element={<DoctorRoute profile={profile}><ReportsAnalytics /></DoctorRoute>} />
                   <Route path="/complaints" element={<DoctorRoute profile={profile}><ComplaintsManager /></DoctorRoute>} />
-                  <Route path="/logs" element={<DoctorRoute profile={profile}><AuditLogs /></DoctorRoute>} />
+                  <Route path="/logs" element={<DoctorRoute profile={profile}><AuditLogs profile={profile} /></DoctorRoute>} />
                   <Route path="/supabase" element={<DoctorRoute profile={profile}><SupabaseDashboard /></DoctorRoute>} />
                   <Route path="/settings" element={<DoctorRoute profile={profile}><DoctorSettings profile={profile} /></DoctorRoute>} />
                   <Route path="/portal" element={<PatientRoute profile={profile}><PatientPortal /></PatientRoute>} />
@@ -262,7 +405,19 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
   const [showNotifications, setShowNotifications] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [isQuickBillOpen, setIsQuickBillOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setIsQuickBillOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const scrollTop = e.currentTarget.scrollTop;
@@ -274,26 +429,30 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
   };
 
   const allNavItems = [
-    { name: t('dashboard'), icon: LayoutDashboard, path: '/dashboard', role: 'doctor' },
-    { name: t('patients'), icon: Users, path: '/patients', role: 'doctor' },
-    { name: t('appointments'), icon: Calendar, path: '/appointments', role: 'doctor' },
-    { name: t('prescription'), icon: FileText, path: '/prescriptions', role: 'doctor' },
-    { name: t('inventory'), icon: Package, path: '/inventory', role: 'doctor' },
-    { name: t('billing'), icon: IndianRupee, path: '/billing', role: 'doctor' },
-    { name: t('doctors') || 'Doctors', icon: UserCircle, path: '/doctors', role: 'doctor' },
-    { name: t('follow-ups'), icon: Clock, path: '/follow-up', role: 'doctor' },
-    { name: t('video_consult'), icon: Video, path: '/video', role: 'doctor' },
-    { name: t('reports'), icon: BarChart3, path: '/reports', role: 'doctor' },
-    { name: 'Grievances', icon: Bell, path: '/complaints', role: 'doctor' },
-    { name: 'Audit Trail', icon: Shield, path: '/logs', role: 'doctor' },
-    { name: 'Supabase Engine', icon: Database, path: '/supabase', role: 'doctor' },
-    { name: t('ai_tools'), icon: BrainCircuit, path: '/ai-tools', role: 'doctor' },
+    { name: 'Super Intelligence', icon: Shield, path: '/super-admin', role: 'super_admin' },
+    { name: 'Management', icon: LayoutDashboard, path: '/clinic-admin', role: 'clinic_admin' },
+    
+    // Doctor Route Group (Consolidated 7 Categories)
+    { name: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', role: 'doctor' },
+    { name: 'Patients Hub', icon: Users, path: '/patients', role: 'doctor' },
+    { name: 'Appointments', icon: Calendar, path: '/appointments', role: 'doctor' },
+    { name: 'AI Report Analyser', icon: BrainCircuit, path: '/ai-tools', role: 'doctor' },
+    { name: 'Billing & Inventory', icon: IndianRupee, path: '/billing', role: 'doctor' },
+    { name: 'Clinic Management', icon: Stethoscope, path: '/doctors', role: 'doctor' },
+    { name: 'Settings', icon: Settings, path: '/settings', role: 'doctor' },
+
+    // Patient Route Group
     { name: t('portal'), icon: UserCircle, path: '/portal', role: 'patient' },
     { name: 'Find Doctors', icon: Stethoscope, path: '/portal?tab=doctors', role: 'patient' },
-    { name: t('settings'), icon: Settings, path: '/settings', role: 'doctor' },
+    { name: 'Clinic Settings', icon: Settings, path: '/settings', role: 'clinic_admin' },
   ];
 
-  const navItems = allNavItems.filter(item => item.role === profile?.role);
+  const navItems = allNavItems.filter(item => {
+    if (profile?.role === 'clinic_admin') {
+      return item.role === 'clinic_admin' || item.role === 'doctor';
+    }
+    return item.role === profile?.role;
+  });
 
   const handleLogout = () => {
     signOut(auth);
@@ -382,9 +541,22 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
         <header className="hidden lg:flex h-20 bg-white border-b border-slate-200 px-8 items-center justify-between z-30 sticky top-0 shrink-0">
           <div>
             <h2 className="text-lg font-bold text-slate-800">Peace be with you, {profile?.name?.split(' ')[0]}</h2>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1 leading-none">Healing Sanctuary • Holistic Sync</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1 leading-none">
+              {profile?.role === 'doctor' ? 'Healing Sanctuary • Clinical Excellence' : 'Wellness Journey • Holistic Recovery'}
+            </p>
           </div>
           <div className="flex items-center gap-6">
+            {profile?.role === 'doctor' && (
+              <button 
+                onClick={() => setIsQuickBillOpen(true)}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-md hover:shadow-lg transition-all active:scale-95 duration-200 border border-emerald-500/10"
+                title="Global Shortcut: Ctrl + B"
+              >
+                <CreditCard size={14} className="animate-pulse" />
+                ⚡ Quick Bill
+              </button>
+            )}
+
             {/* Language Toggle */}
             <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
               {[
@@ -422,6 +594,15 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
             <Logo size="sm" showTagline={false} />
           </Link>
           <div className="flex items-center gap-2">
+            {profile?.role === 'doctor' && (
+              <button 
+                onClick={() => setIsQuickBillOpen(true)}
+                className="px-2 py-1.5 bg-emerald-600 text-white rounded-lg text-[9px] font-bold uppercase flex items-center gap-1 active:scale-95 transition-all"
+              >
+                <CreditCard size={10} className="animate-pulse" />
+                Quick Bill
+              </button>
+            )}
              <button 
               onClick={() => {
                 const langs: any[] = ['en', 'hi', 'mr', 'bn', 'te'];
@@ -567,6 +748,13 @@ function Layout({ children, user, profile }: { children: React.ReactNode, user: 
               activeColor="text-brand-600"
             />
           </div>
+        )}
+        {profile?.role === 'doctor' && (
+          <QuickBillModal 
+            isOpen={isQuickBillOpen} 
+            onClose={() => setIsQuickBillOpen(false)} 
+            profile={profile as any} 
+          />
         )}
       </div>
     </div>

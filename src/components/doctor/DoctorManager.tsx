@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../../lib/db';
 import { logAction } from '../../lib/audit';
-import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, setDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
-import { UserIcon, Plus, X, Shield, Star, Phone, Mail, Trash2, Edit3, Search, Filter, ArrowUpDown, CheckCircle2, MapPin, Users, ChevronDown } from 'lucide-react';
+import { UserIcon, Plus, X, Shield, Star, Phone, Mail, Trash2, Edit3, Search, Filter, ArrowUpDown, CheckCircle2, MapPin, Users, ChevronDown, Stethoscope, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../../lib/i18n';
+import { UserProfile } from '../../types';
+import ComplaintsManager from './ComplaintsManager';
 
 interface Doctor {
   id?: string;
   uid: string;
+  clinicId?: string;
   name: string;
   email: string;
   specialty: string;
@@ -24,8 +27,13 @@ interface Doctor {
   city?: string;
 }
 
-export default function DoctorManager() {
+interface Props {
+  profile?: UserProfile | null;
+}
+
+export default function DoctorManager({ profile }: Props) {
   const { t } = useLanguage();
+  const [activeAdminTab, setActiveAdminTab] = useState<'doctors' | 'grievances'>('doctors');
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingDoc, setEditingDoc] = useState<Doctor | null>(null);
@@ -49,14 +57,26 @@ export default function DoctorManager() {
 
   const fetchData = async () => {
     try {
-      const q = query(collection(db, 'users'), where('role', '==', 'doctor'));
+      let q;
+      if (profile?.role === 'super_admin') {
+        q = query(collection(db, 'users'), where('role', '==', 'doctor'));
+      } else if (profile?.clinicId || profile?.ownedClinicId) {
+        const cid = profile.clinicId || profile.ownedClinicId;
+        q = query(collection(db, 'users'), where('clinicId', '==', cid), where('role', '==', 'doctor'));
+      } else {
+        q = query(collection(db, 'users'), where('role', '==', 'doctor'));
+      }
+      
       const snap = await getDocs(q);
-      setDoctors(snap.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data(),
-        rating: doc.data().rating || (Math.random() * 2 + 3).toFixed(1), // Mock rating if missing
-        patientCount: doc.data().patientCount || Math.floor(Math.random() * 200 + 50) // Mock patients if missing
-      } as Doctor)));
+      setDoctors(snap.docs.map(doc => {
+        const data = doc.data();
+        return { 
+          id: doc.id, 
+          ...(data as any),
+          rating: (data as any).rating || (Math.random() * 2 + 3).toFixed(1),
+          patientCount: (data as any).patientCount || Math.floor(Math.random() * 200 + 50)
+        } as Doctor;
+      }));
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'users');
     }
@@ -64,7 +84,7 @@ export default function DoctorManager() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [profile]);
 
   const specialties = ['All', ...new Set(doctors.map(d => d.specialty).filter(Boolean))];
   const cities = ['All', ...new Set(doctors.map(d => d.city).filter(Boolean))];
@@ -94,31 +114,57 @@ export default function DoctorManager() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const cid = profile?.clinicId || profile?.ownedClinicId;
+
       if (editingDoc) {
         await updateDoc(doc(db, 'users', editingDoc.id!), formData);
         await logAction({
           action: 'Update Doctor Details',
           entityType: 'Patient',
           entityId: editingDoc.id,
-          details: `Updated info for Dr. ${formData.name}`
+          details: `Updated info for Dr. ${formData.name}`,
+          clinicId: cid
         });
         toast.success('Consultant details updated');
       } else {
-        const docRef = await addDoc(collection(db, 'users'), {
+        // For a true SaaS onboarding, we might want to send an invite email.
+        // For now, we'll just create the profile and the user will have to log in via invitation or similar.
+        // Since we are using Firebase, we can't easily create a user account for them from the client without Admin SDK.
+        // We'll create the DOCTOR document and a USER stub, and they'll have to "Claim" it or we use setDoc on a generated UID.
+        
+        const tempUid = 'doc-' + Math.random().toString(36).substring(2, 11);
+        
+        const docData = {
           ...formData,
+          uid: tempUid,
+          clinicId: cid,
           role: 'doctor',
           isVerified: false,
           rating: 4.5,
           patientCount: 0,
           createdAt: new Date().toISOString()
+        };
+
+        await setDoc(doc(db, 'users', tempUid), docData);
+
+        // Also add to doctors collection for searching/listing
+        await setDoc(doc(db, 'doctors', tempUid), {
+          uid: tempUid,
+          clinicId: cid,
+          name: formData.name,
+          specialty: formData.specialty,
+          isVerified: false,
+          isActive: true
         });
+
         await logAction({
           action: 'Register Consultant',
           entityType: 'Patient',
-          entityId: docRef.id,
-          details: `Registered Dr. ${formData.name} as a consultant`
+          entityId: tempUid,
+          details: `Registered Dr. ${formData.name} as a consultant for clinic ${cid}`,
+          clinicId: cid
         });
-        toast.success('New consultant registered');
+        toast.success('New consultant registered to clinic');
       }
       setIsAdding(false);
       setEditingDoc(null);
@@ -161,7 +207,39 @@ export default function DoctorManager() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 lg:space-y-6 h-full flex flex-col pb-20">
+      {/* Clinic Management Tab-Switcher */}
+      <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl w-fit border border-slate-200/50 shadow-sm shrink-0">
+        <button
+          onClick={() => setActiveAdminTab('doctors')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            activeAdminTab === 'doctors'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <Stethoscope size={14} />
+          Registered Physicians
+        </button>
+        <button
+          onClick={() => setActiveAdminTab('grievances')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            activeAdminTab === 'grievances'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <AlertTriangle size={14} />
+          Patient Grievances
+        </button>
+      </div>
+
+      {activeAdminTab === 'grievances' ? (
+        <div className="flex-1 overflow-y-auto">
+          <ComplaintsManager />
+        </div>
+      ) : (
+        <div className="space-y-6">
       <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-6">
         <div>
           <h2 className="text-2xl font-bold text-slate-900 leading-tight font-heading">Consultant Network</h2>
@@ -404,7 +482,7 @@ export default function DoctorManager() {
                         type="number"
                         required
                         value={formData.fees}
-                        onChange={e => setFormData({ ...formData, fees: parseInt(e.target.value) })}
+                        onChange={e => setFormData({ ...formData, fees: parseInt(e.target.value) || 0 })}
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium"
                       />
                     </div>
@@ -437,6 +515,8 @@ export default function DoctorManager() {
           </div>
         )}
       </AnimatePresence>
+      </div>
+      )}
     </div>
   );
 }

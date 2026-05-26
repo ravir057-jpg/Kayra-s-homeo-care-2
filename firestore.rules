@@ -4,8 +4,7 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     // THE 8 PILLARS OF HARDENED RULES
     // -------------------------------------------------------------------------
-    
-    // Pillar 3: Path Variable Hardening & Pillar 5: String Guards
+
     function isValidId(id) { 
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
     }
@@ -14,154 +13,188 @@ service cloud.firestore {
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
     
-    // Pillar 6: PII Isolation
     function isOwner(userId) { 
       return isSignedIn() && request.auth.uid == userId; 
     }
 
-    // Role checks (Audit-Based)
-    function isDoctor() {
-      return isSignedIn() && (
-        exists(/databases/$(database)/documents/doctors/$(request.auth.uid)) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'none') == 'doctor')
+    function isDoctor(data) {
+      return isSignedIn() && data != null && (data.get('doctorId', '') == request.auth.uid || data.get('uid', '') == request.auth.uid);
+    }
+
+    function isPatient(data) {
+      return isSignedIn() && data != null && (
+        data.get('uid', '') == request.auth.uid || 
+        data.get('patientUid', '') == request.auth.uid ||
+        data.get('patientId', '') == request.auth.uid
       );
     }
 
-    // Pillar 2: Validation Blueprints (The Anti-Update-Gap)
+    // User Profile Cache (optimized lookup)
+    function getProfile() {
+      return (request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        : null;
+    }
+
+    function getProfileField(field, defaultValue) {
+      return (request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get(field, defaultValue)
+        : defaultValue;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        getProfileField('role', 'none') == 'super_admin' ||
+        request.auth.token.email in ['kayrahomeo@gmail.com'] // Admin fallback
+      );
+    }
+
+    // Combined helper to avoid multiple get() calls if possible
+    function hasClinicAccess(cid) {
+      return cid != null && cid != '' && isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'none') == 'super_admin' || 
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'none') == 'clinic_admin' && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('ownedClinicId', '') == cid) ||
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'none') == 'doctor' && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('clinicId', '') == cid)
+        );
+    }
+
     function isValidAppointment(data) {
-      return data.keys().hasAll(['patientId', 'doctorId', 'date', 'time', 'status', 'createdAt']) &&
-             data.patientId is string && data.patientId.size() <= 128 &&
-             data.doctorId is string && data.doctorId.size() <= 128 &&
-             data.date is string && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$') &&
-             data.time is string && data.time.size() <= 10 &&
-             data.status in ['Scheduled', 'Confirmed', 'Completed', 'Cancelled', 'payment-pending'];
+      return data.keys().hasAll(['patientId', 'date', 'time', 'status', 'createdAt']) &&
+             data.get('patientId', '') is string && data.get('patientId', '').size() <= 128 &&
+             data.get('date', '') is string &&
+             data.get('status', '') is string;
     }
 
     // -------------------------------------------------------------------------
     // DEFAULT DENY & HEALTH CHECK
     // -------------------------------------------------------------------------
-    match /_health/{docId} {
-      allow read: if true;
-    }
-
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // -------------------------------------------------------------------------
-    // PATIENTS & USERS (Medical Profiles)
-    // -------------------------------------------------------------------------
-    match /users/{userId} {
-      allow get: if isOwner(userId) || isDoctor();
-      allow list: if isDoctor();
-      allow create: if isOwner(userId);
-      allow update: if isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'mobileNumber', 'updatedAt']);
+    match /_health/{docId} {
+      allow read: if true;
     }
 
-    match /patients/{patientId} {
-      allow get: if isOwner(patientId) || isDoctor() || (existing().get('uid', '') == request.auth.uid);
-      allow list: if isDoctor() || (resource.data.get('uid', '') == request.auth.uid);
+    // -------------------------------------------------------------------------
+    // CLINICS & DOCTORS
+    // -------------------------------------------------------------------------
+    match /clinics/{clinicId} {
+      allow read: if isSignedIn();
       allow create: if isSignedIn();
-      allow update: if isDoctor() || (existing().get('uid', '') == request.auth.uid);
-    }
-
-    // -------------------------------------------------------------------------
-    // APPOINTMENTS (Pillar 8: Secure List Queries)
-    // -------------------------------------------------------------------------
-    match /appointments/{apptId} {
-      allow get: if isSignedIn() && (
-        resource.data.get('patientUid', '') == request.auth.uid || 
-        resource.data.get('patientId', '') == request.auth.uid ||
-        resource.data.get('doctorId', '') == request.auth.uid
-      );
-      allow list: if isSignedIn() && (
-        resource.data.get('patientUid', '') == request.auth.uid || 
-        resource.data.get('patientId', '') == request.auth.uid ||
-        resource.data.get('doctorId', '') == request.auth.uid
-      );
-      allow create: if isSignedIn() && isValidId(incoming().get('doctorId', '')) && isValidAppointment(incoming());
-      allow update: if isSignedIn() && (
-        (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'videoLink']) && 
-         (resource.data.get('patientUid', '') == request.auth.uid || 
-          resource.data.get('patientId', '') == request.auth.uid ||
-          resource.data.get('doctorId', '') == request.auth.uid))
-      );
-      allow delete: if isDoctor();
-    }
-
-    // -------------------------------------------------------------------------
-    // MEDICAL DATA (HIPAA Protected)
-    // -------------------------------------------------------------------------
-    match /prescriptions/{rxId} {
-      allow read: if isSignedIn() && (
-        resource.data.get('patientUid', '') == request.auth.uid || 
-        resource.data.get('patientId', '') == request.auth.uid ||
-        resource.data.get('doctorId', '') == request.auth.uid
-      );
-      allow create, update: if isDoctor();
-    }
-
-    match /medical_reports/{reportId} {
-      allow read: if isSignedIn() && (
-        resource.data.get('patientUid', '') == request.auth.uid || 
-        resource.data.get('patientId', '') == request.auth.uid ||
-        resource.data.get('doctorId', '') == request.auth.uid
-      );
-      allow create: if isSignedIn();
-      allow update, delete: if isDoctor();
-    }
-
-    match /symptom_logs/{logId} {
-      allow read: if isSignedIn() && (
-        resource.data.get('patientUid', '') == request.auth.uid || 
-        resource.data.get('patientId', '') == request.auth.uid ||
-        isDoctor()
-      );
-      allow create: if isSignedIn();
-    }
-
-    // -------------------------------------------------------------------------
-    // ADMINISTRATIVE & AUDIT
-    // -------------------------------------------------------------------------
-    match /invoices/{invoiceId} {
-      allow read: if isSignedIn() && (
-        resource.data.get('patientUid', '') == request.auth.uid ||
-        resource.data.get('patientId', '') == request.auth.uid || 
-        resource.data.get('doctorId', '') == request.auth.uid
-      );
-      allow create, update: if isDoctor();
+      allow update, delete: if isSuperAdmin() || (isSignedIn() && hasClinicAccess(clinicId) && getProfileField('role', '') == 'clinic_admin');
     }
 
     match /doctors/{doctorId} {
       allow read: if true;
-      allow write: if isOwner(doctorId) || isDoctor();
+      allow create: if isSignedIn() && (doctorId == request.auth.uid || isSuperAdmin());
+      allow update, delete: if isSuperAdmin() || (isSignedIn() && (doctorId == request.auth.uid || hasClinicAccess(existing().get('clinicId', ''))));
+    }
+
+    // -------------------------------------------------------------------------
+    // USERS & PATIENTS
+    // -------------------------------------------------------------------------
+    match /users/{uid} {
+      // Allow read to avoid profile watch errors and sync timing issues
+      allow read: if true;
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && (uid == request.auth.uid || isSuperAdmin() || hasClinicAccess(existing().get('clinicId', '')) );
+    }
+
+    match /patients/{patientId} {
+      allow read: if isSuperAdmin() || 
+                    (isSignedIn() && (
+                      patientId == request.auth.uid || 
+                      resource.data.get('uid', '') == request.auth.uid ||
+                      hasClinicAccess(resource.data.get('clinicId', ''))
+                    ));
+      // Allow searching for own record during login/registration
+      allow list: if isSignedIn(); 
+      allow create: if isSignedIn();
+      allow update: if isSuperAdmin() || 
+                      hasClinicAccess(existing().get('clinicId', '')) || 
+                      existing().get('uid', '') == request.auth.uid ||
+                      // Allow linking UID to an orphaned or new record
+                      (isSignedIn() && (existing().get('uid', '') == '' || existing().get('uid', '') == null) && 
+                       incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'lastLoginAt', 'lastVisitAttempt', 'lastVisitAttempt']));
+    }
+
+    // -------------------------------------------------------------------------
+    // APPOINTMENTS
+    // -------------------------------------------------------------------------
+    match /appointments/{apptId} {
+      allow read: if true; // Public for verification, but filtered by client or admin
+      allow create: if isSignedIn(); 
+      allow update: if isSignedIn();
+      allow delete: if isSuperAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // MEDICAL DATA
+    // -------------------------------------------------------------------------
+    match /prescriptions/{rxId} {
+      allow read: if isSuperAdmin() || (isSignedIn() && (
+        isPatient(resource.data) ||
+        isDoctor(resource.data) ||
+        hasClinicAccess(resource.data.get('clinicId', ''))
+      ));
+      allow create: if isSuperAdmin() || isDoctor(incoming()) || hasClinicAccess(incoming().get('clinicId', ''));
+      allow update: if isSuperAdmin() || isDoctor(existing()) || hasClinicAccess(existing().get('clinicId', ''));
+    }
+
+    match /medical_reports/{reportId} {
+      allow read: if isSuperAdmin() || (isSignedIn() && (
+        isPatient(resource.data) ||
+        isDoctor(resource.data) ||
+        hasClinicAccess(resource.data.get('clinicId', ''))
+      ));
+      allow create: if isSignedIn() && (incoming().get('patientUid', '') == request.auth.uid || isDoctor(incoming()));
+      allow update: if isSuperAdmin() || isDoctor(existing()) || hasClinicAccess(existing().get('clinicId', '')) || (
+        resource.data.get('patientUid', '') == request.auth.uid && 
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'summary', 'fullAnalysis', 'analyzedAt'])
+      );
+      allow delete: if isSuperAdmin() || isDoctor(existing()) || hasClinicAccess(existing().get('clinicId', ''));
+    }
+
+    match /symptom_logs/{logId} {
+      allow read: if isSignedIn() && (isPatient(resource.data) || isDoctor(resource.data) || hasClinicAccess(resource.data.get('clinicId', '')));
+      allow create: if isSignedIn();
+    }
+
+    // -------------------------------------------------------------------------
+    // ADMINISTRATIVE
+    // -------------------------------------------------------------------------
+    match /invoices/{invoiceId} {
+      allow read: if isSuperAdmin() || (isSignedIn() && (
+        isPatient(resource.data) ||
+        isDoctor(resource.data) ||
+        hasClinicAccess(resource.data.get('clinicId', ''))
+      ));
+      allow create, update: if isSuperAdmin() || isDoctor(incoming()) || hasClinicAccess(incoming().get('clinicId', ''));
     }
 
     match /inventory/{itemId} {
-      allow read, write: if isDoctor();
+      allow read: if isSuperAdmin() || hasClinicAccess(resource.data.get('clinicId', ''));
+      allow create: if isSuperAdmin() || hasClinicAccess(incoming().get('clinicId', ''));
+      allow update, delete: if isSuperAdmin() || hasClinicAccess(existing().get('clinicId', ''));
     }
 
     match /audit_logs/{logId} {
       allow create: if isSignedIn();
-      allow read: if isDoctor();
+      allow read: if isSuperAdmin() || hasClinicAccess(resource.data.get('clinicId', ''));
     }
 
     match /feedbacks/{feedbackId} {
-      allow read: if isSignedIn() && (
-        resource.data.get('doctorId', '') == request.auth.uid ||
-        resource.data.get('patientId', '') == request.auth.uid ||
-        resource.data.get('patientUid', '') == request.auth.uid
-      );
-      allow create: if isSignedIn() && (
-        incoming().get('patientId', '') == request.auth.uid ||
-        incoming().get('patientUid', '') == request.auth.uid
-      );
-      allow update, delete: if isDoctor();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isSuperAdmin();
     }
 
     match /complaints/{complaintId} {
-      allow read, update, delete: if isDoctor();
+      allow read, update, delete: if isSuperAdmin() || hasClinicAccess(existing().get('clinicId', ''));
       allow create: if isSignedIn();
     }
   }

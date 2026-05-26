@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { db } from '../../lib/db';
-import { collection, query, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, getDocs, orderBy, limit, where } from 'firebase/firestore';
 import { Shield, ShieldAlert, ShieldCheck, Clock, Search, Filter, History, User } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion } from 'motion/react';
 
-export default function AuditLogs() {
+export default function AuditLogs({ profile }: { profile?: any }) {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -13,9 +13,23 @@ export default function AuditLogs() {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(50));
+        const baseQuery = collection(db, 'audit_logs');
+        let q;
+        
+        if (profile?.role === 'super_admin') {
+          q = query(baseQuery, orderBy('timestamp', 'desc'), limit(50));
+        } else if (profile?.clinicId) {
+          q = query(baseQuery, where('clinicId', '==', profile.clinicId), orderBy('timestamp', 'desc'), limit(50));
+        } else {
+          // If no clinicId, doctor might only see logs they created? Or just empty.
+          // For now, if no clinicId and not super_admin, we can't fetch broad logs easily per rules.
+          setLogs([]);
+          setLoading(false);
+          return;
+        }
+
         const snap = await getDocs(q);
-        setLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        setLogs(snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) })));
       } catch (error) {
         console.error("Audit fetch failed:", error);
       } finally {
@@ -23,7 +37,7 @@ export default function AuditLogs() {
       }
     };
     fetchLogs();
-  }, []);
+  }, [profile]);
 
   const filtered = logs.filter(log => 
     log.action?.toLowerCase().includes(search.toLowerCase()) || 

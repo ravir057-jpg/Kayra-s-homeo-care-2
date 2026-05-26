@@ -1,10 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
 import { 
-  RecaptchaVerifier, 
-  signInWithPhoneNumber, 
-  ConfirmationResult,
-  createUserWithEmailAndPassword,
   updateProfile,
   sendEmailVerification
 } from 'firebase/auth';
@@ -21,7 +17,9 @@ import {
   CheckCircle2,
   Clock,
   MapPin,
-  FileText
+  FileText,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -47,16 +45,13 @@ export default function ClinicRegistration() {
   // Mobile Auth
   const [mobileNumber, setMobileNumber] = useState('');
   const [otp, setOtp] = useState('');
-  const [verificationId, setVerificationId] = useState<ConfirmationResult | null>(null);
   const [otpSent, setOtpSent] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   
   // Email Auth
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-
-  const recaptchaRef = useRef<HTMLDivElement>(null);
-  const recaptchaVerifier = useRef<RecaptchaVerifier | null>(null);
+  const [agreed, setAgreed] = useState(false);
 
   useEffect(() => {
     if (resendTimer > 0) {
@@ -65,47 +60,34 @@ export default function ClinicRegistration() {
     }
   }, [resendTimer]);
 
-  const setupRecaptcha = () => {
-    if (!recaptchaVerifier.current && recaptchaRef.current) {
-      try {
-        recaptchaVerifier.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
-          size: 'invisible',
-          callback: () => {
-            console.log('reCAPTCHA solved');
-          }
-        });
-      } catch (error) {
-        console.error('Recaptcha init error:', error);
-      }
-    }
-  };
-
   const handleSendOtp = async () => {
     if (!mobileNumber || mobileNumber.length < 10) {
-      toast.error('Please enter a valid mobile number with country code (e.g. +91...)');
+      toast.error('Please enter a valid mobile WhatsApp number (e.g. 9876543210)');
       return;
     }
 
     setLoading(true);
-    setupRecaptcha();
 
     try {
-      if (!recaptchaVerifier.current) throw new Error('Recaptcha not initialized');
-      
-      const appVerifier = recaptchaVerifier.current;
-      const confirmation = await signInWithPhoneNumber(auth, mobileNumber, appVerifier);
-      setVerificationId(confirmation);
+      const response = await fetch('/api/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: mobileNumber, digits: 6 })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to send WhatsApp verification code');
+      }
+
       setOtpSent(true);
       setResendTimer(60);
-      toast.success('Verification code sent to ' + mobileNumber);
+      toast.success(`WhatsApp verification code sent successfully! [DEMO MODE CODE: ${data.code}]`, {
+        duration: 8000
+      });
     } catch (error: any) {
-      console.error('OTP Error:', error);
-      toast.error(error.message || 'Failed to send OTP. Please try again.');
-      // Reset recaptcha on error
-      if (recaptchaVerifier.current) {
-        recaptchaVerifier.current.clear();
-        recaptchaVerifier.current = null;
-      }
+      console.error('OTP Send Error:', error);
+      toast.error(error.message || 'Failed to send OTP via WhatsApp. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -119,14 +101,28 @@ export default function ClinicRegistration() {
 
     setLoading(true);
     try {
-      if (!verificationId) throw new Error('No verification session found');
-      
-      await verificationId.confirm(otp);
-      toast.success('Mobile number verified successfully');
+      const response = await fetch('/api/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: mobileNumber, code: otp })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Invalid verification response');
+      }
+
+      // Ensure authenticated session is active
+      if (!auth.currentUser) {
+        const { signInAnonymously } = await import('firebase/auth');
+        await signInAnonymously(auth);
+      }
+
+      toast.success('WhatsApp number verified successfully!');
       setStep('email');
     } catch (error: any) {
       console.error('Verify Error:', error);
-      toast.error('Invalid OTP. Please check and try again.');
+      toast.error(error.message || 'Invalid WhatsApp OTP. Please use the active demo code or try again.');
     } finally {
       setLoading(false);
     }
@@ -134,6 +130,11 @@ export default function ClinicRegistration() {
 
   const handleFinalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!agreed) {
+      toast.error('You must agree to the Terms & Conditions and Privacy Protected Policy of Kayra\'s Care.');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
 
     try {
@@ -149,11 +150,36 @@ export default function ClinicRegistration() {
       // If we want both, we might need to link accounts. 
       // For simplicity, we'll save everything to Firestore associated with the current UID.
       
+      const clinicId = 'cl-' + Math.random().toString(36).substring(2, 10);
+      
+      // 1. Create Clinic Document
+      const clinicData = {
+        id: clinicId,
+        name: clinicName,
+        ownerId: user.uid,
+        address: clinicAddress,
+        phone: mobileNumber,
+        email: email,
+        subscriptionPlan: 'basic',
+        subscriptionStatus: 'active',
+        subscriptionExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days trial
+        createdAt: new Date().toISOString(),
+        settings: {
+          enableAI: true,
+          enableVideo: true
+        }
+      };
+
+      await setDoc(doc(db, 'clinics', clinicId), clinicData);
+
+      // 2. Create User Profile
       const profileData = {
         uid: user.uid,
         name: doctorName,
         email: email,
-        role: 'doctor',
+        role: 'clinic_admin',
+        clinicId: clinicId,
+        ownedClinicId: clinicId,
         clinicName,
         clinicAddress,
         mobileNumber,
@@ -167,6 +193,18 @@ export default function ClinicRegistration() {
       };
 
       await setDoc(doc(db, 'users', user.uid), profileData);
+      
+      // 3. Register as a Doctor in the clinic too (Optional, but usually clinic owner is also a doctor)
+      const doctorProfile = {
+        uid: user.uid,
+        clinicId,
+        name: doctorName,
+        qualification,
+        specialization: [specialization],
+        isActive: true,
+        isVerified: true
+      };
+      await setDoc(doc(db, 'doctors', user.uid), doctorProfile);
       
       // Optionally update Firebase Profile
       await updateProfile(user, { displayName: doctorName });
@@ -184,6 +222,7 @@ export default function ClinicRegistration() {
       setStep('complete');
       toast.success('Clinic registered successfully!');
     } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, 'clinic-registration');
       console.error('Final Submit Error:', error);
       if (error.code === 'auth/email-already-in-use') {
         toast.error('Account already exists.', {
@@ -458,9 +497,30 @@ export default function ClinicRegistration() {
                   </div>
                 </div>
               </div>
+
+              {/* Terms and conditions agreement checkbox */}
+              <div 
+                onClick={() => setAgreed(!agreed)}
+                className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-100 rounded-xl cursor-pointer select-none hover:bg-slate-100/50 transition-all text-left"
+              >
+                <button
+                  type="button"
+                  className="mt-0.5 text-emerald-600 transition-transform active:scale-95 shrink-0 animate-none"
+                >
+                  {agreed ? (
+                    <CheckSquare size={16} className="text-emerald-650 fill-emerald-100" />
+                  ) : (
+                    <Square size={16} className="text-slate-300" />
+                  )}
+                </button>
+                <p className="text-[10px] sm:text-xs font-semibold text-slate-500 leading-normal">
+                  I agree to the <Link to="/legal/terms" className="text-emerald-650 font-bold hover:underline" onClick={(e) => e.stopPropagation()}>Terms &amp; Conditions</Link> and <Link to="/legal/privacy" className="text-emerald-650 font-bold hover:underline" onClick={(e) => e.stopPropagation()}>Privacy Policy</Link> as a clinical practitioner, obeying Medical Council Registration laws.
+                </p>
+              </div>
+
               <button 
                 type="submit"
-                disabled={loading}
+                disabled={loading || !agreed}
                 className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xl shadow-emerald-100 transition-all flex items-center justify-center gap-2 uppercase tracking-widest text-[11px] disabled:opacity-50 mt-4"
               >
                 {loading ? 'Registering...' : 'Register Registration'} <ArrowRight size={16} />

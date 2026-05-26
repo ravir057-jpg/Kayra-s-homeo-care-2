@@ -104,7 +104,12 @@ export default function PatientLogin() {
       toast.success('Patient Portal accessed');
       navigate('/portal');
     } catch (error: any) {
-      toast.error(error.message);
+      console.error("Google Auth Error:", error);
+      if (error.code === 'auth/network-request-failed') {
+        toast.error('Network Error: Please check if popups are blocked or if your firewall is blocking Google Auth. Try using the direct App URL if this persists.');
+      } else {
+        toast.error(error.message);
+      }
     }
   };
 
@@ -123,21 +128,23 @@ export default function PatientLogin() {
         </Link>
 
         <div className="flex flex-col items-center mb-8">
-          <Logo size="lg" />
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight text-center mt-6">Patient Portal Access</h2>
-          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em] mt-2 text-center">Login with your health profile</p>
+          <Logo size="md" />
+          <div className="mt-6 text-center space-y-1">
+            <h2 className="text-xl font-black text-slate-900 tracking-tighter uppercase">Health Portal</h2>
+            <p className="text-[10px] text-slate-400 font-medium tracking-widest uppercase">Healing with Precision</p>
+          </div>
         </div>
 
         <form onSubmit={handlePatientLogin} className="space-y-4">
           <div className="space-y-1.5">
             <div className="flex justify-between items-center px-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">KHC-ID / पंजीयन संख्या</label>
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">KHC-ID / पंजीयन</label>
               <button 
                 type="button"
                 onClick={() => toast.info('KHC-ID is on your prescription or billing receipt.')}
                 className="text-[9px] font-bold text-indigo-500 hover:text-indigo-600 uppercase tracking-widest"
               >
-                Find ID?
+                Forgot?
               </button>
             </div>
             <input 
@@ -145,19 +152,19 @@ export default function PatientLogin() {
               type="text" 
               value={registrationNumber}
               onChange={(e) => setRegistrationNumber(e.target.value.toUpperCase())}
-              className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-base font-black text-slate-700 placeholder:font-medium placeholder:text-slate-300"
-              placeholder="e.g. KHC-XXXXXX"
+              className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-sm font-black text-slate-700 placeholder:font-medium placeholder:text-slate-300"
+              placeholder="KHC-XXXXXX"
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 leading-none">Mobile Number / मोबाइल</label>
+            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1 leading-none">Mobile / मोबाइल</label>
             <input 
               required
               type="tel" 
               value={mobileNumber}
               onChange={(e) => setMobileNumber(e.target.value)}
-              className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-base font-bold text-slate-700 placeholder:font-medium placeholder:text-slate-300"
-              placeholder="Enter registered mobile number"
+              className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-sm font-bold text-slate-700 placeholder:font-medium placeholder:text-slate-300"
+              placeholder="98765 43210"
             />
           </div>
           

@@ -13,7 +13,7 @@ export interface DashboardStats {
   reviewCount: number;
 }
 
-export async function getDashboardStats(doctorId: string): Promise<DashboardStats> {
+export async function getDashboardStats(doctorId?: string, clinicId?: string): Promise<DashboardStats> {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -21,7 +21,13 @@ export async function getDashboardStats(doctorId: string): Promise<DashboardStat
   try {
     // 1. Get Invoices for Revenue
     const invoicePath = 'invoices';
-    const invoiceQ = query(collection(db, invoicePath), where('doctorId', '==', doctorId));
+    let invoiceQ;
+    if (clinicId) {
+      invoiceQ = query(collection(db, invoicePath), where('clinicId', '==', clinicId));
+    } else {
+      invoiceQ = query(collection(db, invoicePath), where('doctorId', '==', doctorId));
+    }
+    
     let invoiceSnap;
     try {
       invoiceSnap = await getDocs(invoiceQ);
@@ -33,20 +39,26 @@ export async function getDashboardStats(doctorId: string): Promise<DashboardStat
     
     const currentMonthRevenue = invoices
       .filter(i => new Date(i.createdAt) >= startOfMonth)
-      .reduce((sum, i) => sum + i.amount, 0);
+      .reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
       
     const lastMonthRevenue = invoices
       .filter(i => {
         const d = new Date(i.createdAt);
         return d >= startOfLastMonth && d < startOfMonth;
       })
-      .reduce((sum, i) => sum + i.amount, 0);
+      .reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
 
     const revenueChange = lastMonthRevenue === 0 ? 100 : ((currentMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100;
 
     // 2. Get Appointments
     const apptPath = 'appointments';
-    const apptQ = query(collection(db, apptPath), where('doctorId', '==', doctorId));
+    let apptQ;
+    if (clinicId) {
+      apptQ = query(collection(db, apptPath), where('clinicId', '==', clinicId));
+    } else {
+      apptQ = query(collection(db, apptPath), where('doctorId', '==', doctorId));
+    }
+    
     let apptSnap;
     try {
       apptSnap = await getDocs(apptQ);
@@ -64,13 +76,19 @@ export async function getDashboardStats(doctorId: string): Promise<DashboardStat
     
     const apptsChange = lastMonthAppts === 0 ? 100 : ((currentMonthAppts - lastMonthAppts) / lastMonthAppts) * 100;
 
-    // 3. Get Patients (Unique per doctor)
+    // 3. Get Patients (Unique per doctor/clinic)
     const patients = new Set(appointments.map(a => a.patientId)).size;
     // For change, we would need to track enrollment date, assuming 10% for now or 0 if no data
     
     // 4. Get Rating
     const feedbackPath = 'feedbacks';
-    const feedbackQ = query(collection(db, feedbackPath), where('doctorId', '==', doctorId));
+    let feedbackQ;
+    if (clinicId) {
+      feedbackQ = query(collection(db, feedbackPath), where('clinicId', '==', clinicId));
+    } else {
+      feedbackQ = query(collection(db, feedbackPath), where('doctorId', '==', doctorId));
+    }
+    
     let feedbackSnap;
     try {
       feedbackSnap = await getDocs(feedbackQ);
@@ -106,13 +124,19 @@ export async function getDashboardStats(doctorId: string): Promise<DashboardStat
   }
 }
 
-export async function getRevenueChartData(doctorId: string) {
+export async function getRevenueChartData(doctorId?: string, clinicId?: string) {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const data = months.map(name => ({ name, revenue: 0, patients: 0 }));
   
   try {
     const invoicePath = 'invoices';
-    const invoiceQ = query(collection(db, invoicePath), where('doctorId', '==', doctorId));
+    let invoiceQ;
+    if (clinicId) {
+      invoiceQ = query(collection(db, invoicePath), where('clinicId', '==', clinicId));
+    } else {
+      invoiceQ = query(collection(db, invoicePath), where('doctorId', '==', doctorId));
+    }
+    
     let invoiceSnap;
     try {
       invoiceSnap = await getDocs(invoiceQ);
@@ -125,11 +149,17 @@ export async function getRevenueChartData(doctorId: string) {
       const inv = doc.data() as Invoice;
       const date = new Date(inv.createdAt);
       const monthIdx = date.getMonth();
-      data[monthIdx].revenue += inv.amount;
+      data[monthIdx].revenue += (Number(inv.amount) || 0);
     });
 
     const apptPath = 'appointments';
-    const apptQ = query(collection(db, apptPath), where('doctorId', '==', doctorId));
+    let apptQ;
+    if (clinicId) {
+      apptQ = query(collection(db, apptPath), where('clinicId', '==', clinicId));
+    } else {
+      apptQ = query(collection(db, apptPath), where('doctorId', '==', doctorId));
+    }
+    
     let apptSnap;
     try {
       apptSnap = await getDocs(apptQ);

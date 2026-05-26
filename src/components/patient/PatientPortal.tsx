@@ -1,9 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { 
-  FileText, 
+  FileText,
+  FileScan,
+  Brain,
+  ImageIcon,
+  Upload,
   Calendar, 
   MessageCircle, 
+  Loader2, 
   User, 
   Clock, 
   Download, 
@@ -54,6 +59,8 @@ import { Patient, Appointment, Prescription, UserProfile, Feedback, Invoice, Sym
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { useLanguage } from '../../lib/i18n';
+import ReactMarkdown from 'react-markdown';
+import { analyzeMedicalReport } from '../../lib/gemini';
 import { logAction } from '../../lib/audit';
 import { generatePrescriptionPDF, generateInvoicePDF } from '../../lib/pdf';
 import { generateJitsiUrl } from '../../lib/video';
@@ -70,9 +77,11 @@ export default function PatientPortal() {
   const { t } = useLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const currentTab = (searchParams.get('tab') as 'overview' | 'prescriptions' | 'appointments' | 'profile' | 'doctors' | 'history' | 'billing' | 'logs' | 'reports') || 'overview';
+  const currentTab = (searchParams.get('tab') as string) || 'appointments';
+  const [recordsSubTab, setRecordsSubTab] = useState<'prescriptions' | 'reports'>('prescriptions');
   
   const [patientData, setPatientData] = useState<Patient | null>(null);
+  const [clinicInfo, setClinicInfo] = useState<any>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -84,6 +93,9 @@ export default function PatientPortal() {
   const [specializationFilter, setSpecializationFilter] = useState('All');
   const [loading, setLoading] = useState(true);
   const [isLoggingSymptom, setIsLoggingSymptom] = useState(false);
+  const [isUploadingReport, setIsUploadingReport] = useState(false);
+  const [analyzingReportId, setAnalyzingReportId] = useState<string | null>(null);
+  const [selectedReportForView, setSelectedReportForView] = useState<any | null>(null);
   const [symptomFormData, setSymptomFormData] = useState({
     symptoms: '',
     severity: 5,
@@ -94,13 +106,14 @@ export default function PatientPortal() {
     thirst: 'Normal',
     notes: ''
   });
-  const [activity, setActivity] = useState<{ id: string, type: 'booking' | 'prescription' | 'update' | 'symptom', title: string, time: any, status?: string }[]>([]);
+  const [activity, setActivity] = useState<{ id: string, type: 'booking' | 'prescription' | 'update' | 'symptom', title: string, time: any, status?: string, details?: string }[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [isBooking, setIsBooking] = useState(false);
   const [isRescheduling, setIsRescheduling] = useState(false);
   const [isGrievanceOpen, setIsGrievanceOpen] = useState(false);
   const [isBookingDoctor, setIsBookingDoctor] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
+  const [reportCategory, setReportCategory] = useState<'All' | 'Radiology' | 'Pathology' | 'Others'>('All');
   const [grievanceData, setGrievanceData] = useState({
     doctorId: '',
     doctorName: '',
@@ -162,6 +175,90 @@ export default function PatientPortal() {
       fetchData();
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'symptom_logs');
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const user = auth.currentUser;
+    if (!file || !user || !patientData?.id) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("File size exceeds 10MB limit");
+      return;
+    }
+
+    try {
+      setIsUploadingReport(true);
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result as string;
+        const data = base64.split(',')[1];
+        
+        const reportData = {
+          patientId: patientData.id,
+          patientUid: user.uid,
+          patientName: patientData.name,
+          title: file.name,
+          fileName: file.name,
+          fileType: file.type,
+          fileData: data, 
+          status: 'Pending Analysis',
+          createdAt: new Date().toISOString(),
+          category: file.type.includes('image') ? 'Radiology' : 'Pathology',
+          doctorId: appointments[0]?.doctorId || '', 
+        };
+
+        const path = 'medical_reports';
+        try {
+          await addDoc(collection(db, path), reportData);
+          toast.success("Report uploaded to vault successfully");
+          fetchData();
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, path);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (error) {
+      toast.error("Upload failed");
+    } finally {
+      setIsUploadingReport(false);
+    }
+  };
+
+  const handleAIAnalysis = async (report: any) => {
+    if (!report.fileData) {
+      toast.error("Report data missing");
+      return;
+    }
+
+    try {
+      setAnalyzingReportId(report.id);
+      const analysis = await analyzeMedicalReport(
+        { data: report.fileData, mimeType: report.fileType },
+        `This is a report for ${patientData?.name}. Analyze abnormal values and map them to Homeopathic Generalities/Rubrics.`,
+        `Patient: ${patientData?.name}`
+      );
+
+      const path = 'medical_reports';
+      try {
+        await updateDoc(doc(db, path, report.id), {
+          summary: analysis.split('\n').find(l => l.length > 20) || 'Analysis complete.',
+          fullAnalysis: analysis,
+          status: 'Analyzed',
+          analyzedAt: new Date().toISOString()
+        });
+        toast.success("AI Analysis complete and synced to clinic");
+        if (selectedReportForView?.id === report.id) {
+          setSelectedReportForView(prev => ({ ...prev, status: 'Analyzed', fullAnalysis: analysis }));
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, path);
+      }
+    } catch (error) {
+      toast.error("AI Analysis failed");
+    } finally {
+      setAnalyzingReportId(null);
     }
   };
 
@@ -258,8 +355,19 @@ export default function PatientPortal() {
         setPatientData(patient);
         setFormData(patient);
 
+        // Fetch Clinic Info for White-labeling
+        if (patient.clinicId) {
+          const clinicSnap = await getDoc(doc(db, 'clinics', patient.clinicId));
+          if (clinicSnap.exists()) {
+            setClinicInfo(clinicSnap.data());
+          }
+        }
+
         // REAL-TIME SYNC for Appointments
-        const apptQuery = query(collection(db, 'appointments'), where('patientUid', '==', user.uid));
+        const apptQuery = patient.clinicId 
+          ? query(collection(db, 'appointments'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
+          : query(collection(db, 'appointments'), where('patientUid', '==', user.uid));
+        
         onSnapshot(apptQuery, (snapshot) => {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
           setAppointments(data.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
@@ -268,33 +376,46 @@ export default function PatientPortal() {
           const activityLog = data.slice(0, 5).map(a => ({
             id: a.id || Math.random().toString(),
             type: 'booking' as const,
-            title: `Appt ${a.status}`,
+            title: `${a.type} Visit`,
             time: a.createdAt || new Date().toISOString(),
-            status: a.status
+            status: a.status,
+            details: `Appointment with ${a.doctorName}`
           }));
           setActivity(activityLog);
         });
 
         // REAL-TIME SYNC for Prescriptions
-        const rxQuery = query(collection(db, 'prescriptions'), where('patientUid', '==', user.uid));
+        const rxQuery = patient.clinicId
+          ? query(collection(db, 'prescriptions'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
+          : query(collection(db, 'prescriptions'), where('patientUid', '==', user.uid));
+        
         onSnapshot(rxQuery, (snapshot) => {
           setPrescriptions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Prescription)));
         });
 
         // REAL-TIME SYNC for Invoices
-        const invQuery = query(collection(db, 'invoices'), where('patientUid', '==', user.uid));
+        const invQuery = patient.clinicId
+          ? query(collection(db, 'invoices'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
+          : query(collection(db, 'invoices'), where('patientUid', '==', user.uid));
+        
         onSnapshot(invQuery, (snapshot) => {
           setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
         });
 
         // REAL-TIME SYNC for Symptom Logs
-        const logsQuery = query(collection(db, 'symptom_logs'), where('patientUid', '==', user.uid));
+        const logsQuery = patient.clinicId
+          ? query(collection(db, 'symptom_logs'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
+          : query(collection(db, 'symptom_logs'), where('patientUid', '==', user.uid));
+        
         onSnapshot(logsQuery, (snapshot) => {
           setSymptomLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SymptomLog)).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
         });
 
         // REAL-TIME SYNC for Reports
-        const reportsQuery = query(collection(db, 'medical_reports'), where('patientUid', '==', user.uid));
+        const reportsQuery = patient.clinicId
+          ? query(collection(db, 'medical_reports'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
+          : query(collection(db, 'medical_reports'), where('patientUid', '==', user.uid));
+        
         onSnapshot(reportsQuery, (snapshot) => {
           setReports(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
@@ -360,6 +481,11 @@ export default function PatientPortal() {
     try {
       const videoLink = bookingData.type === 'Online' ? generateJitsiUrl(`${patientData.name}-${Date.now()}`) : '';
       
+      const docFee = selectedDoctor?.consultationFee || 500; // Default if not set
+      const commRate = selectedDoctor?.commissionRate || 10; // Default 10%
+      const commAmt = (docFee * commRate) / 100;
+      const netShare = docFee - commAmt;
+
       const apptData = {
         ...bookingData,
         patientId: patientData.id,
@@ -367,7 +493,10 @@ export default function PatientPortal() {
         patientUid: auth.currentUser?.uid,
         doctorId: selectedDoctor?.uid || reschedulingAppt?.doctorId || '',
         doctorName: selectedDoctor?.name || reschedulingAppt?.doctorName || 'Dr. Ravi',
-        status: 'Scheduled',
+        status: 'pending',
+        fee: docFee,
+        commissionAmount: commAmt,
+        doctorNetShare: netShare,
         videoLink,
         updatedAt: new Date().toISOString(),
         ...(isRescheduling ? {} : { createdAt: new Date().toISOString() })
@@ -435,7 +564,8 @@ export default function PatientPortal() {
         patientName: patientData.name,
         rating: reviewData.rating,
         comment: reviewData.comment,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        clinicId: patientData.clinicId || (targetAppointment as any).clinicId || ''
       };
 
       await addDoc(collection(db, 'feedbacks'), fbData);
@@ -544,57 +674,90 @@ export default function PatientPortal() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 pb-24 lg:pb-10 px-0 sm:px-4">
-      {/* Header Banner */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 sm:gap-6 bg-slate-900 p-5 sm:p-10 lg:p-12 rounded-none sm:rounded-[3rem] text-white shadow-2xl shadow-slate-200 relative overflow-hidden shrink-0">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-brand-500/10 rounded-full blur-[100px] -mr-48 -mt-48 pointer-events-none"></div>
-        <div className="absolute bottom-0 left-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-[100px] -ml-32 -mb-32 pointer-events-none"></div>
+      {/* Floating Action Buttons for Elderly Accessibility */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 sm:hidden">
+        <button 
+          onClick={() => {
+            const waNumber = clinicInfo?.whatsappLink || doctors[0]?.mobileNumber || '919153000000';
+            const cleanNumber = waNumber.replace(/\D/g, '');
+            window.open(`https://wa.me/${cleanNumber}?text=Hello Doctor, I need assistance.`, '_blank');
+          }}
+          className="w-14 h-14 bg-emerald-500 text-white rounded-full shadow-2xl flex items-center justify-center animate-bounce group"
+          aria-label="WhatsApp Support"
+        >
+          <MessageCircle size={24} />
+        </button>
+        <button 
+          onClick={() => {
+            const upcoming = appointments.find(a => a.status === 'Scheduled' && a.type === 'Online');
+            if (upcoming) setActiveCall(upcoming);
+            else toast.info("No scheduled video call found. Please book one first.");
+          }}
+          className="w-14 h-14 bg-brand-600 text-white rounded-full shadow-2xl flex items-center justify-center"
+          aria-label="Video Call"
+        >
+          <Video size={24} />
+        </button>
+      </div>
+
+      {/* Main Header - Redesigned to be Minimalist and Teal */}
+      <div className="bg-white border-b border-slate-100 sm:rounded-[2rem] sm:border p-3 sm:p-8 flex flex-col sm:flex-row justify-between items-center gap-3 sm:gap-6 shadow-sm relative overflow-hidden">
+        {/* Abstract Art Background */}
+        <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50/30 rounded-full blur-2xl -mr-16 -mt-16 pointer-events-none"></div>
         
-        <div className="flex gap-4 sm:gap-6 items-center relative z-10 w-full lg:w-auto">
-          <div className="w-12 h-12 sm:w-16 sm:h-16 lg:w-20 lg:h-20 bg-gradient-to-br from-brand-400 to-brand-600 rounded-2xl sm:rounded-3xl flex items-center justify-center shadow-2xl shadow-brand-500/20 shrink-0 transform -rotate-3 transition-transform hover:rotate-0 duration-500">
-            <User size={24} className="sm:size-8 text-white" />
-          </div>
+        <div className="flex items-center gap-3 sm:gap-5 w-full sm:w-auto relative z-10">
+          <button 
+            onClick={() => setActiveTab('profile')}
+            className="w-12 h-12 sm:w-16 sm:h-16 bg-brand-50 rounded-xl sm:rounded-2xl flex items-center justify-center text-brand-600 shadow-sm border border-brand-100 shrink-0 hover:bg-brand-100 transition-colors"
+          >
+            {clinicInfo?.logoUrl ? <img src={clinicInfo.logoUrl} alt="Clinic Logo" className="w-8 h-8 sm:w-10 sm:h-10 object-contain" /> : <User size={24} className="sm:size-8" />}
+          </button>
           <div className="flex-1 min-w-0">
-            <h2 className="text-xl sm:text-3xl lg:text-4xl font-bold tracking-tight mb-1 leading-tight truncate font-heading">
-              {patientData?.name?.split(' ')[0] || 'Member'}
-            </h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-800 rounded-lg border border-slate-700 shadow-inner">
-                <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest leading-none">KHC-ID</span>
-                <span className="text-[9px] sm:text-[10px] font-black text-brand-400 tracking-tighter">KHC-{patientData?.id?.substring(0, 8).toUpperCase() || 'SYNCING'}</span>
+            <p className="text-[8px] sm:text-[10px] font-black text-brand-600 uppercase tracking-[0.3em] mb-0.5">Sanctuary</p>
+            <h1 className="text-lg sm:text-3xl font-black text-slate-800 tracking-tight truncate leading-tight">Hi, {patientData?.name?.split(' ')[0]}</h1>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mt-0.5">
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                <p className="text-[10px] sm:text-xs text-slate-400 font-medium tracking-wide truncate">Your profile is ready.</p>
               </div>
-              {patientData?.isVerified && (
-                <div className="flex items-center gap-1 px-2 py-0.5 bg-brand-500/20 text-brand-400 rounded-full border border-brand-500/30">
-                  <ShieldCheck size={10} />
-                  <span className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest leading-none">Verified Member</span>
+              {patientData?.khcId && (
+                <div className="flex items-center gap-1.5 sm:border-l sm:border-slate-200 sm:pl-3">
+                  <span className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">ID:</span>
+                  <span className="text-[9px] sm:text-xs font-black text-brand-600 bg-brand-50 px-2 py-0.5 rounded-md px-1.5 py-0.5 rounded-md">{patientData.khcId}</span>
                 </div>
               )}
             </div>
           </div>
-          <button 
-            onClick={handleSignOut}
-            className="p-2 sm:p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all active:scale-90"
-          >
-            <LogOut size={16} className="sm:size-[18px]" />
-          </button>
         </div>
 
-        <div className="flex flex-row gap-2 w-full lg:w-auto relative z-10">
-          <button 
-            onClick={() => setActiveTab('doctors')}
-            className="flex-1 lg:flex-none px-4 sm:px-8 py-3.5 sm:py-4 bg-white text-slate-900 rounded-xl sm:rounded-2xl text-[9px] sm:text-xs font-black shadow-xl hover:bg-slate-50 transition-all flex items-center justify-center gap-2 uppercase tracking-widest active:scale-95 border-b-4 border-slate-200"
-          >
-            <Stethoscope size={14} className="text-brand-500" />
-            <span>Find Specialist</span>
-          </button>
+        <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto relative z-10">
           <button 
             onClick={() => {
-              setSelectedDoctor(null);
-              setIsBooking(true);
+              const waNumber = clinicInfo?.whatsappLink || doctors[0]?.mobileNumber || '919153000000';
+              const cleanNumber = waNumber.replace(/\D/g, '');
+              window.open(`https://wa.me/${cleanNumber}?text=Hello Doctor, I need assistance.`, '_blank');
             }}
-            className="flex-1 lg:flex-none px-4 sm:px-8 py-3.5 sm:py-4 bg-brand-600 text-white rounded-xl sm:rounded-2xl text-[9px] sm:text-xs font-black shadow-xl shadow-brand-500/20 hover:bg-brand-500 transition-all flex items-center justify-center gap-2 uppercase tracking-widest active:scale-95 border-b-4 border-brand-800"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 sm:px-6 py-2.5 sm:py-4 bg-emerald-50 text-emerald-700 rounded-lg sm:rounded-2xl text-[9px] sm:text-xs font-bold uppercase tracking-widest hover:bg-emerald-100 transition-all border border-emerald-100"
           >
-            <Calendar size={14} />
-            <span>Secure Slot</span>
+            <MessageCircle size={14} />
+            <span className="xs:inline">Support</span>
+          </button>
+          <button 
+             onClick={() => {
+              const upcoming = appointments.find(a => a.status === 'Scheduled' && a.type === 'Online');
+              if (upcoming) setActiveCall(upcoming);
+              else toast.info("No scheduled video call found. Please book one first.");
+            }}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 sm:px-6 py-2.5 sm:py-4 bg-brand-600 text-white rounded-lg sm:rounded-2xl text-[9px] sm:text-xs font-bold uppercase tracking-widest hover:bg-brand-700 transition-all shadow-lg shadow-brand-200"
+          >
+            <Video size={14} />
+            <span className="xs:inline text-nowrap">Call Dr.</span>
+          </button>
+          <button 
+            onClick={handleSignOut}
+            className="p-2.5 sm:p-4 bg-slate-50 text-slate-400 hover:text-red-500 rounded-lg sm:rounded-2xl transition-all border border-slate-100"
+          >
+            <LogOut size={16} />
           </button>
         </div>
       </div>
@@ -602,59 +765,33 @@ export default function PatientPortal() {
       <div className="flex flex-col lg:flex-row gap-6 sm:gap-8 px-4 sm:px-0">
         {/* Main Content Area */}
         <div className="flex-1 space-y-6 sm:space-y-8 min-w-0">
-          {/* Responsive Navigation Tabs */}
-          <div className="flex lg:flex gap-1 p-1 bg-white border border-slate-200 rounded-xl sm:rounded-2xl w-full sm:w-fit shadow-sm overflow-x-auto no-scrollbar mask-linear-r sticky top-[72px] sm:static z-30 mb-2">
+          {/* Responsive Navigation Tabs - Conforming to the strictly declared three-tab UX layout */}
+          <div className="flex gap-2.5 p-2 bg-white border border-slate-100 rounded-3xl w-full sm:w-fit shadow-xl shadow-slate-100/50 sticky top-[72px] sm:static z-30 mb-8 font-medium overflow-x-auto no-scrollbar flex-nowrap shrink-0">
             <TabButton 
-              active={currentTab === 'overview'} 
-              onClick={() => setActiveTab('overview')}
-              label="Overview"
-              icon={<Home size={16} />}
-            />
-            <TabButton 
+              id="tab-my-appointments"
               active={currentTab === 'appointments'} 
               onClick={() => setActiveTab('appointments')}
-              label="Appts"
-              icon={<Calendar size={16} />}
+              label="📅 My Appointments"
+              icon={<Calendar size={18} className="text-teal-600" />}
               hasBadge={appointments.some(a => a.status === 'Scheduled')}
             />
             <TabButton 
-              active={currentTab === 'prescriptions'} 
-              onClick={() => setActiveTab('prescriptions')}
-              label="Prescriptions"
-              icon={<FileText size={16} />}
+              id="tab-my-records"
+              active={currentTab === 'records'} 
+              onClick={() => setActiveTab('records')}
+              label="📊 My Health Records"
+              icon={<FileText size={18} className="text-teal-600" />}
             />
             <TabButton 
-              active={currentTab === 'history'} 
-              onClick={() => setActiveTab('history')}
-              label="History"
-              icon={<History size={16} />}
-            />
-            <TabButton 
-              active={currentTab === 'logs'} 
-              onClick={() => setActiveTab('logs')}
-              label="Daily Sync"
-              icon={<Activity size={16} />}
-            />
-            <TabButton 
-              active={currentTab === 'doctors'} 
-              onClick={() => setActiveTab('doctors')}
-              label="Doctors"
-              icon={<Stethoscope size={16} />}
-            />
-            <TabButton 
-              active={currentTab === 'profile'} 
-              onClick={() => setActiveTab('profile')}
-              label="Profile"
-              icon={<User size={16} />}
-            />
-            <TabButton 
+              id="tab-my-billing"
               active={currentTab === 'billing'} 
               onClick={() => setActiveTab('billing')}
-              label="Payments"
-              icon={<CreditCard size={16} />}
+              label="💳 Quick Bill Pay"
+              icon={<CreditCard size={18} className="text-teal-600" />}
               hasBadge={invoices.some(i => i.status === 'Pending')}
             />
           </div>
+
 
           <AnimatePresence mode="wait">
             {currentTab === 'overview' && (
@@ -728,33 +865,69 @@ export default function PatientPortal() {
                   );
                 })()}
 
-                {/* Stats Grid */}
+                {/* AI Insights Summary Grid */}
+                {reports.some(r => r.status === 'Analyzed') && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-brand-50 rounded-xl flex items-center justify-center text-brand-600 shadow-sm">
+                        <Sparkles size={20} />
+                      </div>
+                      <h4 className="text-xl font-black text-slate-800 tracking-tight">AI Diagnostic Insights</h4>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {reports.filter(r => r.status === 'Analyzed').slice(0, 2).map((report) => (
+                        <motion.div 
+                          key={report.id}
+                          whileHover={{ scale: 1.02 }}
+                          className="bg-white p-6 rounded-[2rem] border border-brand-100 shadow-sm relative overflow-hidden group cursor-pointer"
+                          onClick={() => setSelectedReportForView(report)}
+                        >
+                          <div className="absolute top-0 right-0 w-32 h-32 bg-brand-50 rounded-full blur-3xl -mr-16 -mt-16 opacity-50"></div>
+                          <div className="relative z-10">
+                            <p className="text-[10px] font-black text-brand-600 uppercase tracking-widest mb-2">{report.title}</p>
+                            <p className="text-xs font-semibold text-slate-700 leading-relaxed italic line-clamp-3">
+                              "{report.summary}"
+                            </p>
+                            <div className="mt-4 flex items-center justify-between">
+                              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{format(new Date(report.createdAt), 'dd MMM yyyy')}</span>
+                              <button className="text-[10px] font-black text-brand-600 uppercase tracking-widest flex items-center gap-1 group-hover:gap-2 transition-all">
+                                View Details <ArrowRight size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Stats Grid - High Visual Impact, Low Space */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
-                  <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-100 shadow-sm flex items-center gap-3 sm:gap-5">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-brand-50 text-brand-600 rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0">
-                      <Calendar size={20} className="sm:size-6" />
+                  <div className="bg-white p-3 sm:p-6 rounded-xl sm:rounded-[2rem] border border-slate-100 shadow-sm flex items-center gap-2.5 sm:gap-5">
+                    <div className="w-9 h-9 sm:w-12 sm:h-12 bg-brand-50 text-brand-600 rounded-lg sm:rounded-2xl flex items-center justify-center shrink-0">
+                      <Calendar size={18} className="sm:size-6" />
                     </div>
                     <div>
-                      <p className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Visits</p>
-                      <p className="text-base sm:text-lg font-bold text-slate-900 mt-1">{appointments.length}</p>
+                      <p className="text-[7px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] leading-none">Visits</p>
+                      <p className="text-sm sm:text-lg font-bold text-slate-900 mt-1">{appointments.length}</p>
                     </div>
                   </div>
-                  <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-100 shadow-sm flex items-center gap-3 sm:gap-5">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-50 text-indigo-600 rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0">
-                      <FileText size={20} className="sm:size-6" />
+                  <div className="bg-white p-3 sm:p-6 rounded-xl sm:rounded-[2rem] border border-slate-100 shadow-sm flex items-center gap-2.5 sm:gap-5">
+                    <div className="w-9 h-9 sm:w-12 sm:h-12 bg-indigo-50 text-indigo-600 rounded-lg sm:rounded-2xl flex items-center justify-center shrink-0">
+                      <FileText size={18} className="sm:size-6" />
                     </div>
                     <div>
-                      <p className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Reports</p>
-                      <p className="text-base sm:text-lg font-bold text-slate-900 mt-1">{prescriptions.length}</p>
+                      <p className="text-[7px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] leading-none">Files</p>
+                      <p className="text-sm sm:text-lg font-bold text-slate-900 mt-1">{reports.length}</p>
                     </div>
                   </div>
-                  <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-100 shadow-sm flex items-center gap-3 sm:gap-5">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-amber-50 text-amber-600 rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0">
-                      <CreditCard size={20} className="sm:size-6" />
+                  <div className="md:flex bg-white p-3 sm:p-6 rounded-xl sm:rounded-[2rem] border border-slate-100 shadow-sm flex items-center gap-2.5 sm:gap-5 hidden sm:flex">
+                    <div className="w-9 h-9 sm:w-12 sm:h-12 bg-amber-50 text-amber-600 rounded-lg sm:rounded-2xl flex items-center justify-center shrink-0">
+                      <CreditCard size={18} className="sm:size-6" />
                     </div>
                     <div>
-                      <p className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Outstanding</p>
-                      <p className="text-base sm:text-lg font-bold text-red-600 mt-1">₹{invoices.filter(i => i.status === 'Pending').reduce((acc, c) => acc + c.amount, 0).toLocaleString()}</p>
+                      <p className="text-[7px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] leading-none">Due</p>
+                      <p className="text-sm sm:text-lg font-bold text-red-600 mt-1">₹{invoices.filter(i => i.status === 'Pending').reduce((acc, c) => acc + c.amount, 0).toLocaleString()}</p>
                     </div>
                   </div>
                 </div>
@@ -762,61 +935,62 @@ export default function PatientPortal() {
                 {/* Health Metrics Snapshot */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                    <div className="md:col-span-1 space-y-6">
-                      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-                         <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4">Vitals Snapshot</h5>
-                         <div className="space-y-4">
+                      <div className="bg-white p-5 sm:p-6 rounded-xl sm:rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden">
+                         <div className="absolute top-0 right-0 w-16 h-16 bg-brand-50 rounded-full blur-xl -mr-8 -mt-8 opacity-40"></div>
+                         <h5 className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4 relative z-10">Vitals</h5>
+                         <div className="space-y-3 relative z-10">
                             <div className="flex justify-between items-center">
-                               <span className="text-xs text-slate-500 font-medium">Blood Group</span>
-                               <span className="text-xs font-black text-red-600 bg-red-50 px-2 py-0.5 rounded-lg">{patientData?.bloodGroup || 'N/A'}</span>
+                               <span className="text-[11px] text-slate-500 font-medium">Group</span>
+                               <span className="text-[10px] font-black text-red-600 bg-red-50 px-1.5 py-0.5 rounded-lg">{patientData?.bloodGroup || 'N/A'}</span>
                             </div>
                             <div className="flex justify-between items-center">
-                               <span className="text-xs text-slate-500 font-medium">Gender</span>
-                               <span className="text-xs font-bold text-slate-800">{patientData?.gender || 'N/A'}</span>
+                               <span className="text-[11px] text-slate-500 font-medium">Gender</span>
+                               <span className="text-[11px] font-bold text-slate-800">{patientData?.gender || 'N/A'}</span>
                             </div>
                             <div className="flex justify-between items-center">
-                               <span className="text-xs text-slate-500 font-medium">Age</span>
-                               <span className="text-xs font-bold text-slate-800">
+                               <span className="text-[11px] text-slate-500 font-medium">Age</span>
+                               <span className="text-[11px] font-bold text-slate-800">
                                   {patientData?.dob ? new Date().getFullYear() - new Date(patientData.dob).getFullYear() : 'N/A'}
                                </span>
                             </div>
                          </div>
-                         <button onClick={() => setActiveTab('profile')} className="w-full mt-6 py-3 bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-widest rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-all">
-                            Manage Health Profile
+                         <button onClick={() => setActiveTab('profile')} className="w-full mt-6 py-2.5 bg-slate-50 border border-slate-100 text-[9px] font-bold text-slate-500 uppercase tracking-widest rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-all relative z-10">
+                            Edit Profile
                          </button>
                       </div>
                    </div>
 
                    <div className="md:col-span-3">
-                      {/* Activity Feed */}
-                      <div className="bg-white p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] border border-slate-200 shadow-sm h-full">
-                        <div className="flex items-center justify-between mb-6 sm:mb-8">
-                          <h4 className="text-base sm:text-lg font-bold text-slate-800">Health Journey</h4>
-                          <span className="text-[10px] font-bold text-brand-600 uppercase tracking-widest bg-brand-50 px-2 sm:px-3 py-1 rounded-lg">Last 30 Days</span>
+                      {/* Activity Feed - Minimalist for Mobile */}
+                      <div className="bg-white p-5 sm:p-8 rounded-2xl sm:rounded-[2.5rem] border border-slate-200 shadow-sm h-full">
+                        <div className="flex items-center justify-between mb-5 sm:mb-8">
+                          <h4 className="text-sm sm:text-lg font-bold text-slate-800 tracking-tight">Recent Journey</h4>
+                          <span className="text-[8px] sm:text-[10px] font-bold text-brand-600 uppercase tracking-widest bg-brand-50 px-2 py-1 rounded-lg">Updates</span>
                         </div>
 
-                        <div className="space-y-6">
+                        <div className="space-y-4 sm:space-y-6">
                           {activity.length === 0 ? (
-                            <div className="text-center py-10">
-                              <History size={32} className="mx-auto text-slate-200 mb-3" />
-                              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">No recent updates</p>
+                            <div className="text-center py-6 sm:py-10">
+                              <History size={24} className="mx-auto text-slate-200 mb-2" />
+                              <p className="text-slate-400 text-[9px] font-bold uppercase tracking-widest">No recent data</p>
                             </div>
                           ) : (
                             activity.slice(0, 4).map((item, idx) => (
-                              <div key={idx} className="flex gap-4 group">
+                              <div key={idx} className="flex gap-3 sm:gap-4 group">
                                 <div className="flex flex-col items-center gap-1">
-                                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${
+                                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center shrink-0 shadow-sm border border-white ${
                                     item.type === 'booking' ? 'bg-indigo-50 text-indigo-600' : 
                                     item.type === 'prescription' ? 'bg-brand-50 text-brand-600' : 'bg-slate-50 text-slate-600'
                                   }`}>
-                                    {item.type === 'booking' ? <Calendar size={18} /> : 
-                                     item.type === 'prescription' ? <FileText size={18} /> : <User size={18} />}
+                                    {item.type === 'booking' ? <Calendar size={14} className="sm:size-[18px]" /> : 
+                                     item.type === 'prescription' ? <FileText size={14} className="sm:size-[18px]" /> : <User size={14} className="sm:size-[18px]" />}
                                   </div>
                                   {idx !== activity.length - 1 && <div className="w-0.5 h-full bg-slate-100 group-last:hidden"></div>}
                                 </div>
-                                <div className="flex-1 pb-6">
-                                  <div className="flex justify-between items-start mb-1">
-                                    <h5 className="text-sm font-bold text-slate-800 leading-tight">{item.title}</h5>
-                                    <span className="text-[9px] font-bold text-slate-400 uppercase">
+                                <div className="flex-1 pb-4 sm:pb-6">
+                                  <div className="flex justify-between items-start mb-0.5">
+                                    <h5 className="text-[13px] sm:text-sm font-bold text-slate-800 leading-tight truncate max-w-[140px] sm:max-w-none">{item.title}</h5>
+                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">
                                       {(() => {
                                         try {
                                           const time = item.time;
@@ -824,27 +998,12 @@ export default function PatientPortal() {
                                           const date = (typeof time === 'object' && time !== null && 'toDate' in time) 
                                             ? (time as any).toDate() 
                                             : new Date(time as string);
-                                          return format(date, 'HH:mm');
-                                        } catch (e) {
-                                          return '--:--';
-                                        }
+                                          return format(date, 'dd MMM');
+                                        } catch (e) { return '--:--'; }
                                       })()}
                                     </span>
                                   </div>
-                                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                                    {(() => {
-                                      try {
-                                        const time = item.time;
-                                        if (!time) return 'Recent';
-                                        const date = (typeof time === 'object' && time !== null && 'toDate' in time) 
-                                          ? (time as any).toDate() 
-                                          : new Date(time as string);
-                                        return format(date, 'MMM dd, yyyy');
-                                      } catch (e) {
-                                        return 'Recent';
-                                      }
-                                    })()} • {item.status || 'Synced'}
-                                  </p>
+                                  <p className="text-[10px] sm:text-xs text-slate-400 font-medium line-clamp-1">{item.details || item.status}</p>
                                 </div>
                               </div>
                             ))
@@ -867,25 +1026,30 @@ export default function PatientPortal() {
                     <div className="p-6 bg-slate-50 rounded-3xl mb-8">
                        <div className="flex justify-between items-center mb-4">
                           <p className="text-xs font-bold text-slate-700">Digital ID Completion</p>
-                          <p className="text-xs font-bold text-brand-600">85%</p>
+                          <p className="text-xs font-bold text-brand-600">92%</p>
                        </div>
                        <div className="h-2 bg-white rounded-full overflow-hidden border border-slate-100">
-                          <div className="h-full bg-brand-500 w-[85%] rounded-full shadow-[0_0_10px_rgba(22,163,74,0.3)]"></div>
+                          <div className="h-full bg-brand-600 w-[92%] rounded-full shadow-[0_0_12px_rgba(0,128,128,0.4)]"></div>
                        </div>
                     </div>
 
                     <div className="space-y-4">
-                      <p className="text-xs text-slate-500 font-medium leading-relaxed">Your digital health records are secured with end-to-end encryption. Every booking reflection is auditable.</p>
-                      <div className="grid grid-cols-2 gap-3">
-                         <div className="p-4 bg-white rounded-2xl border border-slate-100">
-                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Encryption</p>
-                            <p className="text-xs font-bold text-slate-800">AES-256</p>
-                         </div>
-                         <div className="p-4 bg-white rounded-2xl border border-slate-100">
-                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Backup</p>
-                            <p className="text-xs font-bold text-brand-600">Daily Sync</p>
-                         </div>
-                      </div>
+                       <p className="text-xs text-slate-500 font-medium leading-relaxed">Your digital health records are secured with end-to-end encryption. Every booking reflection is auditable.</p>
+                       <div className="grid grid-cols-1 gap-3">
+                          <div className="p-4 bg-brand-50 rounded-2xl border border-brand-100">
+                             <div className="flex items-center gap-3 mb-2">
+                                <MessageCircle size={16} className="text-brand-600" />
+                                <p className="text-[10px] font-bold text-brand-600 uppercase tracking-widest">Direct Support</p>
+                             </div>
+                             <p className="text-xs font-bold text-slate-800 mb-3">Instant clinical assistance via WhatsApp</p>
+                             <button 
+                               onClick={() => window.open(`https://wa.me/919153000000?text=Hello Doctor, I need assistance with my clinical case.`, '_blank')}
+                               className="w-full py-3 bg-brand-600 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-500 transition-all flex items-center justify-center gap-2"
+                             >
+                               <MessageCircle size={14} /> Open WhatsApp
+                             </button>
+                          </div>
+                       </div>
                     </div>
                   </div>
 
@@ -1290,6 +1454,91 @@ export default function PatientPortal() {
                 exit={{ opacity: 0, scale: 0.98 }}
                 className="space-y-8"
               >
+                {/* Critical Alerts / Pending Payments nested here for immediate action */}
+                {invoices.filter(i => i.status === 'Pending').length > 0 && (
+                  <motion.div 
+                    initial={{ opacity: 0, x: -25 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="bg-red-50 border border-red-100 p-6 sm:p-8 rounded-[2.5rem] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 shadow-sm"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-red-500 shadow-sm shrink-0 border border-red-100">
+                        <AlertCircle size={24} />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest pl-0.5 mb-1">Financial Clearance Required</p>
+                        <h4 className="font-bold text-slate-800 tracking-tight">You have {invoices.filter(i => i.status === 'Pending').length} pending payment(s)</h4>
+                        <p className="text-xs text-slate-500 font-medium leading-relaxed">Please clear outstanding consultation dues via our secure gateway to keep records active.</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setActiveTab('billing')}
+                      className="w-full sm:w-auto px-8 py-4 bg-red-600 hover:bg-rose-700 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all shadow-xl shadow-red-200 cursor-pointer text-center shrink-0"
+                    >
+                      Pay Now
+                    </button>
+                  </motion.div>
+                )}
+
+                {/* Feedback Prompt nested here */}
+                {(() => {
+                  const pendingReview = appointments.find(a => a.status === 'Completed' && !feedbacks.some(f => f.appointmentId === a.id));
+                  if (!pendingReview) return null;
+                  
+                  return (
+                    <motion.div 
+                      layout
+                      initial={{ opacity: 0, y: -20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-brand-600 p-8 rounded-[3.5rem] text-white overflow-hidden relative group shadow-2xl shadow-brand-100"
+                    >
+                      <div className="absolute -right-8 -top-8 w-32 h-32 bg-white/10 rounded-full group-hover:scale-150 transition-transform duration-700"></div>
+                      <div className="relative z-10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/70 mb-2">Patient Feedback</p>
+                          <h4 className="text-2xl font-black mb-1 tracking-tight leading-none">Consultation Completed</h4>
+                          <p className="text-brand-100 text-xs font-semibold leading-relaxed max-w-md mt-2">Help us enhance clinical outcomes! Share your treatment feedback of your session with Dr. {pendingReview.doctorName} instantly.</p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setTargetAppointment(pendingReview);
+                            setIsReviewing(true);
+                          }}
+                          className="px-8 py-4.5 bg-white text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl shadow-slate-950/10 cursor-pointer shrink-0"
+                        >
+                          Submit Review
+                        </button>
+                      </div>
+                    </motion.div>
+                  );
+                })()}
+
+                {/* Hero Booking CTA Card */}
+                <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-8 sm:p-12 rounded-[3.5rem] text-white relative overflow-hidden shadow-2xl shadow-emerald-500/20">
+                  <div className="absolute top-0 right-0 w-96 h-96 bg-white/15 rounded-full blur-[100px] -mr-48 -mt-48 pointer-events-none" />
+                  <div className="relative z-10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
+                    <div>
+                      <span className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-md px-4 py-2 rounded-2xl mb-4 border border-white/25 text-[10px] font-black uppercase tracking-widest leading-none">
+                        <Calendar size={12} />
+                        Bihar's Sanctuary Care
+                      </span>
+                      <h3 className="text-3xl sm:text-4xl font-black tracking-tight leading-tight mb-2">Book Clinical Consult</h3>
+                      <p className="text-emerald-50 text-xs sm:text-sm font-medium opacity-90 max-w-xl">
+                        Schedule a customized evaluation with Dr. Ravi Raj or other verified homeopathic physicians securely.
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setSelectedDoctor(doctors[0] || null);
+                        setIsBooking(true);
+                      }}
+                      className="px-10 py-5 bg-white text-emerald-700 hover:bg-slate-50 rounded-2xl text-xs font-black uppercase tracking-widest transition-all active:scale-95 shadow-xl shadow-emerald-950/10 cursor-pointer shrink-0"
+                    >
+                      New Appointment
+                    </button>
+                  </div>
+                </div>
+
                 <div className="bg-white p-2 rounded-2xl border border-slate-200 w-fit flex gap-1 shadow-sm">
                   <button 
                     onClick={() => setSearchParams({ tab: 'appointments', filter: 'upcoming' })}
@@ -1317,7 +1566,7 @@ export default function PatientPortal() {
                   const filter = searchParams.get('filter') || 'upcoming';
                   const filteredAppts = appointments.filter(a => 
                     filter === 'upcoming' 
-                      ? (a.status === 'scheduled' || a.status === 'Scheduled' || a.status === 'in-progress')
+                      ? (a.status === 'scheduled' || a.status === 'Scheduled' || a.status === 'in-progress' || a.status === 'pending')
                       : (a.status === 'completed' || a.status === 'Completed' || a.status === 'cancelled' || a.status === 'Cancelled')
                   );
 
@@ -1360,9 +1609,10 @@ export default function PatientPortal() {
                                 <span className={`text-[9px] font-black uppercase px-3 py-1 rounded-full shadow-sm ${
                                   appt.status === 'Completed' ? 'bg-emerald-500 text-white' :
                                   appt.status === 'Cancelled' ? 'bg-red-500 text-white' : 
-                                  appt.status === 'Scheduled' ? 'bg-amber-400 text-white' : 'bg-indigo-600 text-white'
+                                  appt.status === 'Scheduled' ? 'bg-amber-400 text-white' : 
+                                  appt.status === 'pending' ? 'bg-indigo-500 text-white animate-pulse' : 'bg-indigo-600 text-white'
                                 }`}>
-                                  {appt.status}
+                                  {appt.status === 'pending' ? 'Request Sent' : appt.status}
                                 </span>
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
@@ -1387,6 +1637,15 @@ export default function PatientPortal() {
                                     Dr. {appt.doctorName}
                                   </div>
                                 </div>
+                                {patientData?.khcId && (
+                                  <div className="space-y-1">
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Your Reg. No</p>
+                                    <div className="flex items-center gap-2 text-xs font-black text-brand-600">
+                                      <ShieldCheck size={14} className="text-brand-500" />
+                                      {patientData.khcId}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1409,17 +1668,12 @@ export default function PatientPortal() {
                                 <button 
                                   onClick={() => {
                                     setReschedulingAppt(appt);
-                                    setBookingData({
-                                      date: appt.date,
-                                      time: appt.time,
-                                      type: appt.type as any,
-                                      reason: appt.reason || '',
-                                      hasVoiceNote: !!appt.hasVoiceNote
-                                    });
+                                    const dr = doctors.find(d => d.uid === appt.doctorId) || doctors[0];
+                                    setSelectedDoctor(dr || null);
                                     setIsRescheduling(true);
-                                    setIsBooking(true);
+                                    setIsBookingDoctor(true);
                                   }}
-                                  className="flex-1 sm:flex-none px-6 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-xl shadow-slate-200"
+                                  className="flex-1 sm:flex-none px-6 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-xl shadow-slate-200 cursor-pointer text-center"
                                 >
                                   Reschedule
                                 </button>
@@ -1445,6 +1699,240 @@ export default function PatientPortal() {
                     </div>
                   );
                 })()}
+              </motion.div>
+            )}
+
+            {currentTab === 'records' && (
+              <motion.div 
+                key="records"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="space-y-8"
+              >
+                {/* Sub-tab selection */}
+                <div className="flex items-center gap-2 p-1.5 sm:p-2 bg-white border border-slate-100 rounded-[1.75rem] sm:rounded-3xl w-full sm:w-fit shadow-xl shadow-slate-100/50">
+                  <button 
+                    onClick={() => setRecordsSubTab('prescriptions')}
+                    className={`flex-1 sm:flex-none px-4 sm:px-8 py-3 sm:py-3.5 rounded-xl sm:rounded-2xl text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all ${
+                      recordsSubTab === 'prescriptions' 
+                        ? 'bg-slate-900 text-white shadow-xl shadow-slate-300' 
+                        : 'text-slate-400 hover:bg-slate-50'
+                    }`}
+                  >
+                    Dosage Prescriptions
+                  </button>
+                  <button 
+                    onClick={() => setRecordsSubTab('reports')}
+                    className={`flex-1 sm:flex-none px-4 sm:px-8 py-3 sm:py-3.5 rounded-xl sm:rounded-2xl text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all ${
+                      recordsSubTab === 'reports' 
+                        ? 'bg-slate-900 text-white shadow-xl shadow-slate-300' 
+                        : 'text-slate-400 hover:bg-slate-50'
+                    }`}
+                  >
+                    Diagnostic Reports
+                  </button>
+                </div>
+
+                {recordsSubTab === 'prescriptions' ? (
+                  <div className="space-y-8">
+                    <div className="bg-emerald-500 p-8 sm:p-14 rounded-[3.5rem] text-white relative overflow-hidden shadow-2xl shadow-emerald-500/20">
+                      <div className="absolute top-0 right-0 w-96 h-96 bg-white/20 rounded-full blur-[120px] -mr-48 -mt-48 transition-all pointer-events-none"></div>
+                      <div className="relative z-10 font-sans">
+                        <div className="inline-flex items-center gap-3 bg-white/20 backdrop-blur-md px-4 py-2 rounded-2xl mb-8 border border-white/20 text-[10px] font-black uppercase tracking-[0.2em]">
+                          <Sparkles size={16} />
+                          Clinical Compliance
+                        </div>
+                        <h3 className="text-3xl sm:text-5xl font-black mb-6 tracking-tight leading-[1.1]">Active Health Prescriptions</h3>
+                        <p className="text-emerald-50 text-sm sm:text-base max-w-2xl leading-relaxed font-medium opacity-90">Your therapeutic treatment plan is detailed below. Each remedy is chemically optimized for your physiological symptoms according to Materia Medica.</p>
+                      </div>
+                    </div>
+
+                    {prescriptions.length === 0 ? (
+                      <div className="bg-white p-16 sm:p-24 rounded-[4rem] border-2 border-dashed border-slate-100 text-center flex flex-col items-center justify-center">
+                        <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-8 border border-slate-100">
+                          <FileText size={48} strokeWidth={1} />
+                        </div>
+                        <p className="text-slate-800 font-black uppercase tracking-widest text-[10px] mb-2 font-bold select-none">Vault Clean</p>
+                        <p className="text-slate-400 text-xs font-medium max-w-xs">No pharmaceutical plans have been issued to your Health ID at this time.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-6">
+                        {prescriptions.map((rx) => {
+                          const dr = doctors.find(d => d.uid === rx.doctorId);
+                          return (
+                            <div key={rx.id} className="bg-white p-1 pr-6 rounded-[2.5rem] border border-slate-200 hover:border-emerald-200 transition-all shadow-sm hover:shadow-2xl hover:shadow-emerald-500/5 group">
+                              <div className="flex flex-col lg:flex-row gap-8">
+                                <div className="w-full lg:w-64 bg-emerald-50 p-8 rounded-[2rem] flex flex-col items-center justify-center text-center shrink-0 border border-emerald-100">
+                                  <FileText size={36} className="text-emerald-500 mb-6" />
+                                  <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Vault Registry</span>
+                                  <p className="text-xs font-black text-slate-800 tracking-tighter">DRX-{rx.id?.substring(0,8)?.toUpperCase()}</p>
+                                  <div className="mt-8 pt-6 border-t border-emerald-100 w-full space-y-2">
+                                    <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest leading-none">Date Issued</p>
+                                    <p className="text-sm font-black text-slate-800">{format(new Date(rx.createdAt), 'dd MMM yyyy')}</p>
+                                  </div>
+                                </div>
+
+                                <div className="flex-1 py-8 pl-4 sm:pl-0">
+                                  <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+                                    <h5 className="text-2xl font-black text-slate-800 tracking-tight">{rx.diagnosis}</h5>
+                                    <button 
+                                      onClick={() => downloadPrescriptionList(rx)}
+                                      className="px-8 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 transition-all active:scale-95 shadow-xl shadow-slate-200 cursor-pointer"
+                                    >
+                                      Export as PDF
+                                    </button>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                                    <div className="space-y-4">
+                                      <div className="space-y-1">
+                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Issuing Specialist</p>
+                                        <div className="flex items-center gap-2">
+                                          <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-500">DR</div>
+                                          <p className="text-sm font-bold text-slate-800">Dr. {dr?.name || 'Practitioner'}</p>
+                                        </div>
+                                      </div>
+                                      <div className="space-y-1">
+                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Clinical Status</p>
+                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-black uppercase tracking-wider">
+                                          <Zap size={10} fill="currentColor" /> Active Regimen
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="col-span-1 lg:col-span-2 bg-slate-50 p-8 rounded-3xl border border-slate-100">
+                                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-6 leading-none animate-pulse">Medication Inventory</p>
+                                      <div className="flex flex-wrap gap-3">
+                                        {rx.medications.map((m, mIdx) => (
+                                          <div key={mIdx} className="px-5 py-3 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                                            <div className="w-2 h-2 rounded-full bg-emerald-400"></div>
+                                            <div>
+                                              <p className="text-[11px] font-black text-slate-800 tracking-tight leading-none">{m.name}</p>
+                                              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1.5 leading-none">{m.dosage}</p>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-8">
+                    <div className="bg-brand-600 p-8 sm:p-14 rounded-[3.5rem] text-white relative overflow-hidden shadow-2xl shadow-brand-100">
+                       <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-[120px] -mr-48 -mt-48 transition-all pointer-events-none"></div>
+                       <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-8 text-center md:text-left">
+                          <div className="max-w-xl">
+                            <div className="inline-flex items-center gap-2 bg-white/20 text-white px-5 py-2.5 rounded-2xl mb-6 border border-white/20 backdrop-blur-md text-xs font-black uppercase tracking-[0.2em] leading-none">
+                              <ShieldCheck size={20} />
+                              Encrypted Medical Vault
+                            </div>
+                            <h3 className="text-4xl sm:text-5xl font-black mb-6 tracking-tight leading-tight">Patient Diagnostic Reports</h3>
+                            <p className="text-brand-50 text-sm sm:text-base font-medium leading-relaxed opacity-90">Centralized storage for your medical journey. Upload and analyze your diagnostic documents instantly with India's most powerful Homeopathic AI analytics system.</p>
+                          </div>
+                          <div className="shrink-0 w-full md:w-auto">
+                            <label className="cursor-pointer flex items-center justify-center gap-3 px-12 py-6 bg-white text-brand-600 hover:bg-brand-50 rounded-3xl font-black text-sm uppercase tracking-widest transition-all shadow-2xl active:scale-95">
+                              <Upload size={24} />
+                              <span>{isUploadingReport ? 'Uploading...' : 'Add to Vault'}</span>
+                              <input type="file" className="hidden" onChange={handleFileUpload} accept="image/*,application/pdf" disabled={isUploadingReport} />
+                            </label>
+                          </div>
+                       </div>
+                    </div>
+
+                    {/* Medical Vault Categorization Filter */}
+                    <div className="flex items-center gap-2 p-2 bg-white border border-slate-100 rounded-[2rem] w-fit shadow-sm overflow-x-auto no-scrollbar">
+                      {(['All', 'Radiology', 'Pathology', 'Others'] as const).map((cat) => (
+                        <button 
+                          key={cat}
+                          onClick={() => setReportCategory(cat)}
+                          className={`px-8 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${
+                            reportCategory === cat 
+                              ? 'bg-brand-600 text-white shadow-lg shadow-brand-100/50' 
+                              : 'text-slate-400 hover:bg-slate-50'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+
+                    {reports.filter(r => reportCategory === 'All' || r.category === reportCategory).length === 0 ? (
+                      <div className="bg-white p-24 rounded-[4rem] border-2 border-dashed border-slate-100 text-center flex flex-col items-center justify-center">
+                        <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-8 border border-slate-100">
+                          <FileScan size={48} strokeWidth={1} />
+                        </div>
+                        <p className="text-slate-800 font-black uppercase tracking-widest text-[11px] mb-2 leading-none">Vault Segment Empty</p>
+                        <p className="text-slate-400 text-sm font-medium max-w-xs">Upload your clinical reports to enable AI-powered diagnostic correlation.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                        {reports
+                          .filter(r => reportCategory === 'All' || r.category === reportCategory)
+                          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                          .map((report) => (
+                          <div key={report.id} className="bg-white p-2 rounded-[3rem] border border-slate-200 shadow-sm hover:shadow-2xl hover:border-brand-500 transition-all group relative overflow-hidden flex flex-col min-h-[500px]">
+                             <div className="p-8 pb-0 flex items-center justify-between">
+                                <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm border ${
+                                  report.category === 'Radiology' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-brand-50 text-brand-600 border-brand-100'
+                                }`}>
+                                   {report.category === 'Radiology' ? <ImageIcon size={32} /> : <FileText size={32} />}
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className={`text-[10px] font-black uppercase px-4 py-1.5 rounded-full mb-2 shadow-sm ${
+                                    report.status === 'Analyzed' ? 'bg-emerald-500 text-white' : 'bg-amber-400 text-white'
+                                  }`}>
+                                    {report.status}
+                                  </span>
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none bg-slate-50 px-2 py-1 rounded-md">{report.category}</span>
+                                </div>
+                             </div>
+                             
+                             <div className="p-8 flex-1 flex flex-col">
+                                <h4 className="text-xl font-black text-slate-800 mb-1 line-clamp-2 leading-tight">{report.title}</h4>
+                                <div className="flex items-center gap-2 mb-8">
+                                  <Calendar size={14} className="text-slate-300" />
+                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{format(new Date(report.createdAt), 'dd MMM yyyy')}</p>
+                                </div>
+                                
+                                <div className="flex-1 p-6 bg-slate-50/50 rounded-[2rem] border border-slate-100 flex flex-col relative overflow-hidden">
+                                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2 relative z-10">
+                                     <Brain size={16} className={report.status === 'Analyzed' ? 'text-brand-600' : 'text-slate-300'} />
+                                     Clinical Assessment
+                                   </p>
+                                   {report.status === 'Analyzed' ? (
+                                     <div className="relative z-10 flex-1 flex flex-col justify-between">
+                                       <p className="text-xs font-semibold text-slate-600 leading-relaxed italic line-clamp-5">
+                                         "{report.summary || 'Findings analyzed.'}"
+                                       </p>
+                                       <button 
+                                         onClick={() => setSelectedReportForView(report)}
+                                         className="mt-4 text-[10px] font-black text-brand-600 uppercase tracking-widest hover:underline text-left cursor-pointer animate-pulse"
+                                       >
+                                         View Full Analysis
+                                       </button>
+                                     </div>
+                                   ) : (
+                                     <div className="flex-1 flex flex-col items-center justify-center text-center gap-3">
+                                       <Loader2 size={24} className="text-amber-400 animate-spin" />
+                                       <p className="text-[10px] font-extrabold text-amber-500 uppercase tracking-wider">AI Analysis in Progress</p>
+                                     </div>
+                                   )}
+                               </div>
+                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -1557,45 +2045,133 @@ export default function PatientPortal() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                <div className="bg-slate-900 p-8 rounded-[3rem] text-white relative overflow-hidden">
-                   <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-[100px] -mr-32 -mt-32"></div>
-                   <div className="relative z-10">
-                      <div className="inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-400 px-4 py-2 rounded-full mb-6">
-                        <Sparkles size={16} />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">AI Analyzed Reports</span>
+                <div className="bg-brand-600 p-8 sm:p-14 rounded-[3.5rem] text-white relative overflow-hidden shadow-2xl shadow-brand-100">
+                   <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-[120px] -mr-48 -mt-48"></div>
+                   <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-8 text-center md:text-left">
+                      <div className="max-w-xl">
+                        <div className="inline-flex items-center gap-2 bg-white/20 text-white px-5 py-2.5 rounded-2xl mb-6 border border-white/20 backdrop-blur-md">
+                          <ShieldCheck size={20} />
+                          <span className="text-xs font-black uppercase tracking-[0.2em]">Encrypted Medical Vault</span>
+                        </div>
+                        <h3 className="text-4xl sm:text-5xl font-black mb-6 tracking-tight leading-tight">Patient Diagnostic Records</h3>
+                        <p className="text-brand-50 text-sm sm:text-base font-medium leading-relaxed opacity-90">Centralized storage for your medical journey. Upload, categorize, and analyze your reports using Kayra AI Clinical Intelligence.</p>
                       </div>
-                      <h3 className="text-3xl font-bold mb-4">My Medical Reports</h3>
-                      <p className="text-slate-400 text-sm max-w-xl">View all your diagnostic reports, analyzed by our AI for better understanding. Your data is strictly private.</p>
+                      <div className="shrink-0 w-full md:w-auto">
+                        <label className="cursor-pointer flex items-center justify-center gap-3 px-12 py-6 bg-white text-brand-600 rounded-3xl font-black text-sm uppercase tracking-widest hover:bg-brand-50 transition-all shadow-2xl active:scale-95">
+                          <Upload size={24} />
+                          <span>{isUploadingReport ? 'Uploading...' : 'Add to Vault'}</span>
+                          <input type="file" className="hidden" onChange={handleFileUpload} accept="image/*,application/pdf" disabled={isUploadingReport} />
+                        </label>
+                      </div>
                    </div>
                 </div>
 
-                {reports.length === 0 ? (
-                  <div className="bg-white p-20 rounded-[3rem] border border-dashed border-slate-200 text-center">
-                    <FileText size={48} className="mx-auto text-slate-200 mb-6" strokeWidth={1} />
-                    <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">No reports archived yet</p>
-                    <button className="mt-4 px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest">Upload Report</button>
+                {/* Medical Vault Categorization Filter */}
+                <div className="flex items-center gap-2 p-2 bg-white border border-slate-100 rounded-[2rem] w-fit shadow-sm overflow-x-auto no-scrollbar">
+                  {(['All', 'Radiology', 'Pathology', 'Others'] as const).map((cat) => (
+                    <button 
+                      key={cat}
+                      onClick={() => setReportCategory(cat)}
+                      className={`px-8 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${
+                        reportCategory === cat 
+                          ? 'bg-brand-600 text-white shadow-lg' 
+                          : 'text-slate-400 hover:bg-slate-50'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                {reports.filter(r => reportCategory === 'All' || r.category === reportCategory).length === 0 ? (
+                  <div className="bg-white p-24 rounded-[4rem] border-2 border-dashed border-slate-100 text-center flex flex-col items-center justify-center">
+                    <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-8 border border-slate-100">
+                      <FileScan size={48} strokeWidth={1} />
+                    </div>
+                    <p className="text-slate-800 font-black uppercase tracking-widest text-[11px] mb-2">Vault segment Empty</p>
+                    <p className="text-slate-400 text-sm font-medium max-w-xs">Upload your clinical reports to enable AI-powered diagnostic correlation.</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {reports.map((report) => (
-                      <div key={report.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm hover:shadow-xl transition-all group">
-                         <div className="flex items-center justify-between mb-6">
-                            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
-                               <FileText size={24} />
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    {reports
+                      .filter(r => reportCategory === 'All' || r.category === reportCategory)
+                      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                      .map((report) => (
+                      <div key={report.id} className="bg-white p-2 rounded-[3rem] border border-slate-200 shadow-sm hover:shadow-2xl hover:border-brand-500 transition-all group relative overflow-hidden flex flex-col min-h-[500px]">
+                         <div className="p-8 pb-0 flex items-center justify-between">
+                            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm border ${
+                              report.category === 'Radiology' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-brand-50 text-brand-600 border-brand-100'
+                            }`}>
+                               {report.category === 'Radiology' ? <ImageIcon size={32} /> : <FileText size={32} />}
                             </div>
-                            <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-3 py-1 rounded-lg uppercase tracking-widest">AI Analyzed</span>
+                            <div className="flex flex-col items-end">
+                              <span className={`text-[10px] font-black uppercase px-4 py-1.5 rounded-full mb-2 shadow-sm ${
+                                report.status === 'Analyzed' ? 'bg-emerald-500 text-white' : 'bg-amber-400 text-white'
+                              }`}>
+                                {report.status}
+                              </span>
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none bg-slate-50 px-2 py-1 rounded-md">{report.category}</span>
+                            </div>
                          </div>
-                         <h4 className="text-lg font-bold text-slate-800 mb-2">{report.title || 'Diagnostic Report'}</h4>
-                         <p className="text-xs text-slate-500 mb-6">{format(new Date(report.createdAt), 'dd MMM yyyy')}</p>
                          
-                         <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 mb-6">
-                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">AI Summary</p>
-                            <p className="text-xs font-medium text-slate-700 leading-relaxed line-clamp-3">{report.summary || 'Summary pending analysis...'}</p>
-                         </div>
+                         <div className="p-8 flex-1 flex flex-col">
+                            <h4 className="text-xl font-black text-slate-800 mb-1 line-clamp-2 leading-tight">{report.title}</h4>
+                            <div className="flex items-center gap-2 mb-8">
+                              <Calendar size={14} className="text-slate-300" />
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{format(new Date(report.createdAt), 'dd MMM yyyy')}</p>
+                            </div>
+                            
+                            <div className="flex-1 p-6 bg-slate-50/50 rounded-[2rem] border border-slate-100 flex flex-col relative overflow-hidden">
+                               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2 relative z-10">
+                                 <Brain size={16} className={report.status === 'Analyzed' ? 'text-brand-600' : 'text-slate-300'} />
+                                 Clinical Assessment
+                               </p>
+                               {report.status === 'Analyzed' ? (
+                                 <div className="relative z-10">
+                                   <p className="text-xs font-semibold text-slate-600 leading-relaxed italic line-clamp-5">
+                                     "{report.summary || 'Findings summarized by AI engine.'}"
+                                   </p>
+                                   <button 
+                                     onClick={() => setSelectedReportForView(report)}
+                                     className="mt-4 text-[10px] font-black text-brand-600 uppercase tracking-widest hover:underline"
+                                   >
+                                     Read Full Analysis
+                                   </button>
+                                 </div>
+                               ) : (
+                                 <div className="flex-1 flex flex-col items-center justify-center py-6 relative z-10">
+                                    {analyzingReportId === report.id ? (
+                                      <div className="flex flex-col items-center gap-4">
+                                        <div className="w-10 h-10 border-4 border-brand-100 border-t-brand-600 rounded-full animate-spin"></div>
+                                        <p className="text-xs font-black text-brand-600 animate-pulse uppercase tracking-widest text-center">Processing<br/>Medical Intelligence</p>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">Unanalyzed Record</p>
+                                        <button 
+                                          onClick={() => handleAIAnalysis(report)}
+                                          className="w-full py-4 bg-white border border-brand-100 text-brand-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-600 hover:text-white transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95"
+                                        >
+                                          <Sparkles size={16} /> Run AI Engine
+                                        </button>
+                                      </>
+                                    )}
+                                 </div>
+                                )}
+                            </div>
 
-                         <button className="w-full py-4 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-600 transition-all">
-                            View Full Analysis
-                         </button>
+                            <div className="mt-8 flex items-center gap-3">
+                               <button 
+                                 onClick={() => setSelectedReportForView(report)}
+                                 className="flex-1 py-5 bg-slate-900 text-white rounded-[1.5rem] text-xs font-black uppercase tracking-widest hover:bg-brand-700 transition-all active:scale-95 flex items-center justify-center gap-3 shadow-xl shadow-slate-200"
+                               >
+                                  <FileScan size={18} /> View Vault Entry
+                               </button>
+                               <button className="p-5 bg-white text-slate-400 hover:text-red-500 rounded-[1.5rem] border border-slate-200 transition-all hover:bg-red-50 hover:border-red-100 shadow-sm">
+                                  <Trash2 size={20} />
+                               </button>
+                            </div>
+                         </div>
                       </div>
                     ))}
                   </div>
@@ -1999,11 +2575,17 @@ export default function PatientPortal() {
              <AppointmentBooking 
                doctor={selectedDoctor as any} 
                patient={patientData as any}
+               apptToReschedule={reschedulingAppt || undefined}
                onSuccess={() => {
+                  setIsRescheduling(false);
+                  setReschedulingAppt(null);
+                  fetchData();
                  setIsBookingDoctor(false);
                  setSelectedDoctor(null);
                }} 
                onCancel={() => {
+                  setIsRescheduling(false);
+                  setReschedulingAppt(null);
                  setIsBookingDoctor(false);
                  setSelectedDoctor(null);
                }} 
@@ -2238,6 +2820,123 @@ export default function PatientPortal() {
         )}
       </AnimatePresence>
 
+        {/* Report View Modal */}
+        <AnimatePresence>
+          {selectedReportForView && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+              >
+                <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-brand-600 text-white rounded-2xl flex items-center justify-center shadow-lg">
+                      <FileScan size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-800">{selectedReportForView.title}</h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        {format(new Date(selectedReportForView.createdAt), 'PPPP')}
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setSelectedReportForView(null)}
+                    className="p-3 text-slate-400 hover:text-slate-600 rounded-2xl transition-colors border border-slate-100 bg-white shadow-sm"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar">
+                  {/* Summary Section */}
+                  <div className="bg-brand-50 p-8 rounded-[2rem] border border-brand-100 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
+                      <Brain size={120} className="text-brand-600" />
+                    </div>
+                    <h4 className="text-[10px] font-black text-brand-600 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                       <Sparkles size={14} /> AI Clinical Summary
+                    </h4>
+                    <p className="text-sm font-bold text-slate-700 leading-relaxed italic">
+                      {selectedReportForView.summary || 'Summary pending clinical AI analysis.'}
+                    </p>
+                  </div>
+
+                  {/* Full Analysis Content */}
+                  {selectedReportForView.fullAnalysis ? (
+                    <div className="space-y-8">
+                      <div className="markdown-body shadow-sm p-8 sm:p-12 rounded-[2.5rem] border border-slate-100 bg-white prose prose-slate max-w-none">
+                        <ReactMarkdown>{selectedReportForView.fullAnalysis}</ReactMarkdown>
+                      </div>
+                      
+                      {/* Legal Guard */}
+                      <div className="p-8 bg-amber-50 border border-amber-100 rounded-[2rem]">
+                        <div className="flex items-center gap-3 mb-4 text-amber-700">
+                          <AlertTriangle size={20} />
+                          <h5 className="font-black text-xs uppercase tracking-widest">Medical Disclaimer & Legal Safeguard</h5>
+                        </div>
+                        <ul className="space-y-2 text-[11px] text-amber-800 font-medium list-disc pl-5 opacity-80">
+                          <li>This analysis is purely generated by Clinical AI for informational assistance only.</li>
+                          <li>It does NOT constitute a final medical diagnosis or therapeutic prescription.</li>
+                          <li>All clinical interpretations must be verified by your attending physician (Dr. {doctors.find(d => d.uid === selectedReportForView.doctorId)?.name || 'In-Charge'}).</li>
+                          <li>In case of acute discomfort or findings flagged as "Critical", please visit the clinic immediately or seek emergency care.</li>
+                        </ul>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-20 bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
+                      <Brain size={48} className="mx-auto text-slate-200 mb-4 animate-pulse" />
+                      <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Run analysis for detailed clinical breakdown</p>
+                      <button 
+                        onClick={() => handleAIAnalysis(selectedReportForView)}
+                        className="mt-6 px-10 py-5 bg-brand-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-brand-100 active:scale-95 transition-all text-center flex items-center justify-center mx-auto"
+                      >
+                         Initiate AI Analysis
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="p-8 bg-slate-900 rounded-[2rem] text-white">
+                    <h5 className="text-[10px] font-black text-brand-400 uppercase tracking-widest mb-4">Vault Information Security</h5>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                      <div>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mb-1">Vault Status</p>
+                        <p className="text-xs font-bold">{selectedReportForView.status}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mb-1">Encrypted ID</p>
+                        <p className="text-xs font-mono">#RX-{selectedReportForView.id?.substring(0,6).toUpperCase()}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mb-1">Security</p>
+                        <p className="text-xs font-bold text-emerald-400">L3 Secure</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mb-1">Synced</p>
+                        <p className="text-xs font-bold">Instantly</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end gap-4">
+                  <button className="px-8 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-slate-100 transition-all">
+                    <Download size={16} /> Download PDF
+                  </button>
+                  <button 
+                    onClick={() => setSelectedReportForView(null)}
+                    className="px-8 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-600 transition-all"
+                  >
+                    Close Vault
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
       <AnimatePresence>
         {activeCall && (
           <VideoMeetingRoom 
@@ -2330,7 +3029,7 @@ export default function PatientPortal() {
                       max="10" 
                       step="1"
                       value={symptomFormData.severity}
-                      onChange={e => setSymptomFormData({...symptomFormData, severity: parseInt(e.target.value)})}
+                      onChange={e => setSymptomFormData({...symptomFormData, severity: parseInt(e.target.value) || 1})}
                       className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                     />
                     <div className="flex justify-between text-[8px] font-bold text-slate-400 uppercase font-mono px-1">
@@ -2455,17 +3154,63 @@ export default function PatientPortal() {
           </div>
         )}
       </AnimatePresence>
-      <WhatsAppButton />
+      <ElderlyCareBar clinicInfo={clinicInfo} appointments={appointments} />
     </div>
   );
 }
 
-function TabButton({ active, onClick, label, icon, hasBadge }: { active: boolean, onClick: () => void, label: string, icon: React.ReactNode, hasBadge?: boolean }) {
+function ElderlyCareBar({ clinicInfo, appointments }: { clinicInfo: any, appointments: any[] }) {
+  const nextAppt = appointments.find(a => a.status === 'Scheduled');
+  
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-50 p-4 lg:p-6 flex flex-col items-center pointer-events-none">
+      <div className="w-full max-w-4xl bg-white/90 backdrop-blur-2xl border border-slate-200 shadow-[0_-20px_50px_rgba(0,0,0,0.1)] rounded-[2.5rem] p-3 sm:p-4 flex flex-col sm:flex-row items-center gap-3 sm:gap-6 pointer-events-auto">
+        
+        {/* Next Appointment Alert (Small) */}
+        {nextAppt && (
+          <div className="hidden sm:flex flex-1 items-center gap-4 pl-4 border-r border-slate-100">
+             <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center shrink-0">
+                <Calendar size={20} />
+             </div>
+             <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Next Visit</p>
+                <p className="text-xs font-bold text-slate-800">{nextAppt.date} at {nextAppt.time}</p>
+             </div>
+          </div>
+        )}
+
+        <div className="flex w-full sm:w-auto gap-2 sm:gap-4 flex-1 sm:flex-none justify-end">
+          <a 
+            href={`https://wa.me/${clinicInfo?.phone || '919570183111'}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 sm:flex-none px-6 sm:px-10 py-4 sm:py-5 bg-emerald-600 text-white rounded-[1.8rem] text-xs sm:text-sm font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-500/20 active:scale-95 border-b-4 border-emerald-800"
+          >
+            <MessageCircle size={20} />
+            <span className="hidden xs:inline">WhatsApp</span>
+            <span className="xs:hidden">Chat</span>
+          </a>
+          
+          <button 
+            className="flex-1 sm:flex-none px-6 sm:px-10 py-4 sm:py-5 bg-slate-900 text-white rounded-[1.8rem] text-xs sm:text-sm font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-black transition-all shadow-xl shadow-slate-900/20 active:scale-95 border-b-4 border-slate-950"
+          >
+            <Video size={20} className="text-brand-400" />
+            <span className="hidden xs:inline">Video Call</span>
+            <span className="xs:hidden">Call</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabButton({ id, active, onClick, label, icon, hasBadge }: { id?: string, active: boolean, onClick: () => void, label: string, icon: React.ReactNode, hasBadge?: boolean }) {
   return (
     <button
+      id={id}
       onClick={onClick}
-      className={`px-6 sm:px-8 py-2.5 sm:py-3 rounded-xl text-[10px] sm:text-[11px] font-bold transition-all flex items-center gap-2 sm:gap-2.5 uppercase tracking-widest leading-none whitespace-nowrap shrink-0 relative ${
-        active ? 'bg-slate-900 text-white shadow-xl shadow-slate-200' : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'
+      className={`px-4 sm:px-8 py-2.5 sm:py-3 rounded-xl text-[10px] sm:text-[11px] font-black transition-all flex items-center gap-2 sm:gap-2.5 uppercase tracking-widest leading-none whitespace-nowrap shrink-0 relative ${
+        active ? 'bg-brand-600 text-white shadow-[0_10px_30px_-10px_rgba(20,184,166,0.3)]' : 'text-slate-400 hover:text-brand-600 hover:bg-brand-50'
       }`}
     >
       {icon}

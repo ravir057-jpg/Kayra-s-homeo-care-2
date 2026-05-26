@@ -18,7 +18,7 @@ import {
   Zap
 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
-import { collection, addDoc, serverTimestamp, setDoc, doc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, setDoc, doc, query, where, getDocs, updateDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { format, addDays, startOfDay } from 'date-fns';
 import { Patient, UserProfile, Appointment } from '../../types';
@@ -28,9 +28,10 @@ interface AppointmentBookingProps {
   patient: Patient;
   onSuccess: () => void;
   onCancel: () => void;
+  apptToReschedule?: Appointment;
 }
 
-export default function AppointmentBooking({ doctor, patient, onSuccess, onCancel }: AppointmentBookingProps) {
+export default function AppointmentBooking({ doctor, patient, onSuccess, onCancel, apptToReschedule }: AppointmentBookingProps) {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [bookingData, setBookingData] = useState({
@@ -78,41 +79,100 @@ export default function AppointmentBooking({ doctor, patient, onSuccess, onCance
     }
     setLoading(true);
     try {
+      if (apptToReschedule?.id) {
+        await updateDoc(doc(db, 'appointments', apptToReschedule.id), {
+          date: bookingData.date,
+          time: bookingData.time,
+          type: bookingData.type,
+          reason: bookingData.reason || apptToReschedule.reason || '',
+          updatedAt: new Date().toISOString()
+        });
+        toast.success('Appointment rescheduled successfully!');
+        
+        // WhatsApp Notification
+        const message = `Namaste Dr. ${doctor.name}, I've rescheduled my appointment to ${bookingData.date} at ${bookingData.time}. Reason: ${bookingData.reason || 'Rescheduling'}. [KHC-ID: KHC-${patient.id?.substring(0,6).toUpperCase()}]`;
+        const waNumber = (doctor as any).whatsappLink || doctor.mobileNumber || '919153000000';
+        const cleanNumber = waNumber.replace(/\D/g, '');
+        const waUrl = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(message)}`;
+        window.open(waUrl, '_blank');
+        onSuccess();
+        return;
+      }
+
+      const docFee = doctor.consultationFee || 500;
+      const commRate = doctor.commissionRate || 10;
+      const commAmt = (docFee * commRate) / 100;
+      const netShare = docFee - commAmt;
+
       const apptData: Omit<Appointment, 'id'> = {
         patientId: patient.id!,
         patientName: patient.name,
-        patientUid: auth.currentUser?.uid,
+        patientUid: auth.currentUser?.uid || '',
         doctorId: doctor.uid,
         doctorName: doctor.name || 'Specialist',
+        clinicId: (doctor as any).clinicId || '',
         date: bookingData.date,
         time: bookingData.time,
         type: bookingData.type,
-        status: bookingData.paymentMethod === 'Online' ? 'payment-pending' : 'Scheduled',
+        status: bookingData.paymentMethod === 'Online' ? 'payment-pending' : 'pending',
+        fee: docFee,
+        commissionAmount: commAmt,
+        doctorNetShare: netShare,
         reason: bookingData.reason,
         createdAt: new Date().toISOString()
       };
 
       const docRef = await addDoc(collection(db, 'appointments'), apptData);
 
-      // Create initial invoice if needed
-      if (doctor.consultationFee && doctor.consultationFee > 0) {
-        await addDoc(collection(db, 'invoices'), {
-          patientId: patient.id,
-          doctorId: doctor.uid,
-          appointmentId: docRef.id,
-          amount: doctor.consultationFee,
-          status: 'Pending',
-          items: [{ description: 'Consultation Fee', price: doctor.consultationFee, quantity: 1 }],
-          createdAt: new Date().toISOString()
-        });
-      }
+      // Create initial invoice
+      await addDoc(collection(db, 'invoices'), {
+        patientId: patient.id,
+        patientUid: auth.currentUser?.uid || '',
+        doctorId: doctor.uid,
+        clinicId: (doctor as any).clinicId || '',
+        appointmentId: docRef.id,
+        amount: docFee,
+        fee: docFee,
+        commissionAmount: commAmt,
+        doctorNetShare: netShare,
+        status: bookingData.paymentMethod === 'Online' ? 'Pending' : 'Paid',
+        paymentMethod: bookingData.paymentMethod,
+        items: [{ description: 'Consultation Fee', price: docFee, quantity: 1 }],
+        createdAt: new Date().toISOString()
+      });
 
       toast.success('Appointment Sync Successful');
       
       // WhatsApp Integration
       const message = `Namaste Dr. ${doctor.name}, I've booked a ${bookingData.type} appointment for ${bookingData.date} at ${bookingData.time}. Reason: ${bookingData.reason || 'General Checkup'}. [KHC-ID: KHC-${patient.id?.substring(0,6).toUpperCase()}]`;
-      const waUrl = `https://wa.me/${doctor.mobileNumber || '919153000000'}?text=${encodeURIComponent(message)}`;
+      const waNumber = (doctor as any).whatsappLink || doctor.mobileNumber || '919153000000';
+      const cleanNumber = waNumber.replace(/\D/g, '');
+      const waUrl = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(message)}`;
       
+      // Formspree Lead Routing (if configured)
+      const formspreeId = (doctor as any).formspreeId;
+      if (formspreeId) {
+        try {
+          fetch(`https://formspree.io/f/${formspreeId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              subject: `New Appointment: ${patient.name}`,
+              patientName: patient.name,
+              patientPhone: patient.phone,
+              appointmentDate: bookingData.date,
+              appointmentTime: bookingData.time,
+              type: bookingData.type,
+              reason: bookingData.reason,
+              fees: doctor.consultationFee,
+              platform: 'Kayra Homeo Care'
+            })
+          });
+        } catch (e) {
+          console.error("Formspree lead failed", e);
+        }
+      }
+
       window.open(waUrl, '_blank');
       onSuccess();
     } catch (error) {
@@ -125,18 +185,19 @@ export default function AppointmentBooking({ doctor, patient, onSuccess, onCance
   return (
     <div className="bg-white rounded-[3rem] border border-slate-100 shadow-2xl shadow-slate-200 overflow-hidden max-w-4xl mx-auto flex flex-col md:flex-row h-full md:h-[600px] font-sans">
       {/* Left side summary */}
-      <div className="w-full md:w-80 bg-slate-900 p-8 text-white flex flex-col justify-between">
-        <div className="space-y-8">
-           <button onClick={onCancel} className="text-white/50 hover:text-white transition-colors">
-              <ArrowLeft size={24} />
+      <div className="w-full md:w-80 bg-brand-600 p-8 text-white flex flex-col justify-between relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-32 -mt-32"></div>
+        <div className="space-y-8 relative z-10">
+           <button onClick={onCancel} className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center hover:bg-white/30 transition-all">
+              <ArrowLeft size={20} />
            </button>
            
            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-emerald-400 text-[10px] font-black uppercase tracking-widest">
-                 <Zap size={10} fill="currentColor" /> Holistic Appointment
+              <div className="flex items-center gap-2 text-white/80 text-[10px] font-black uppercase tracking-widest bg-white/10 w-fit px-3 py-1 rounded-lg">
+                 <Zap size={10} fill="currentColor" /> Premium Session
               </div>
-              <h2 className="text-3xl font-bold tracking-tight leading-tight">Secure Your Session</h2>
-              <p className="text-slate-400 text-sm">Consultation with India's top holistic specialists.</p>
+              <h2 className="text-4xl font-black tracking-tight leading-[1.1]">Clinical Engagement</h2>
+              <p className="text-brand-50 text-sm font-medium opacity-90 leading-relaxed">Secure your slot with India's leading medical experts.</p>
            </div>
            
            <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-4">
@@ -210,7 +271,7 @@ export default function AppointmentBooking({ doctor, patient, onSuccess, onCance
                   </div>
 
                   {/* Slots Grid */}
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-4 gap-2 sm:gap-3">
                     {ALL_SLOTS.map(slot => {
                       const isBooked = bookedSlots.includes(slot);
                       return (
@@ -246,9 +307,9 @@ export default function AppointmentBooking({ doctor, patient, onSuccess, onCance
 
                 <button 
                   onClick={() => setStep(2)}
-                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl hover:bg-emerald-600 transition-all flex items-center justify-center gap-2"
+                  className="w-full py-5 bg-brand-600 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-brand-100 hover:bg-brand-700 transition-all flex items-center justify-center gap-2"
                 >
-                  Confirm Slot <ArrowRight size={16} />
+                  Confirm Slot <ArrowRight size={18} />
                 </button>
               </motion.div>
             )}

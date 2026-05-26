@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType, auth } from '../../lib/db';
 import { logAction } from '../../lib/audit';
-import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc, updateDoc, getDoc, where } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { Patient, UserProfile } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -37,10 +37,14 @@ import PatientBillingHistory from './PatientBillingHistory';
 import PatientActivityLog from './PatientActivityLog';
 import SymptomViewer from './SymptomViewer';
 import PatientAIAnalyzer from './PatientAIAnalyzer';
+import PatientReportVault from './PatientReportVault';
+import PrescriptionPad from './PrescriptionPad';
+import FollowUpManager from './FollowUpManager';
 
-export default function PatientManager() {
+export default function PatientManager({ profile }: { profile?: any }) {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const [activeSubTab, setActiveSubTab] = useState<'directory' | 'prescription' | 'followup'>('directory');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -48,9 +52,10 @@ export default function PatientManager() {
   const [viewingBilling, setViewingBilling] = useState<Patient | null>(null);
   const [viewingLog, setViewingLog] = useState<Patient | null>(null);
   const [viewingSymptom, setViewingSymptom] = useState<Patient | null>(null);
+  const [viewingVault, setViewingVault] = useState<Patient | null>(null);
   const [analyzingPatient, setAnalyzingPatient] = useState<Patient | null>(null);
   const [patientToDelete, setPatientToDelete] = useState<Patient | null>(null);
-  const [doctorProfile, setDoctorProfile] = useState<UserProfile | null>(null);
+  // Remove local doctorProfile state as we use prop
   
   const [formData, setFormData] = useState<Partial<Patient>>({
     patientId: '',
@@ -73,8 +78,13 @@ export default function PatientManager() {
   };
 
   const fetchPatients = async () => {
+    if (!profile?.clinicId) return;
     try {
-      const q = query(collection(db, 'patients'), orderBy('createdAt', 'desc'));
+      const q = query(
+        collection(db, 'patients'), 
+        where('clinicId', '==', profile.clinicId),
+        orderBy('createdAt', 'desc')
+      );
       const querySnapshot = await getDocs(q);
       const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient));
       setPatients(data);
@@ -84,15 +94,10 @@ export default function PatientManager() {
   };
 
   useEffect(() => {
-    fetchPatients();
-    const fetchDocProfile = async () => {
-      if (auth.currentUser) {
-        const d = await getDoc(doc(db, 'users', auth.currentUser.uid));
-        if (d.exists()) setDoctorProfile(d.data() as UserProfile);
-      }
-    };
-    fetchDocProfile();
-  }, []);
+    if (profile?.clinicId) {
+      fetchPatients();
+    }
+  }, [profile]);
 
   const handleOpenAddModal = () => {
     setFormData({
@@ -110,9 +115,13 @@ export default function PatientManager() {
 
   const handleSubmitForm = async (data: Partial<Patient>) => {
     try {
+      const patientPayload = {
+        ...data,
+        khcId: data.patientId, // Sync khcId with patientId for blueprint consistency
+      };
       if (editingPatient) {
         const docRef = doc(db, 'patients', editingPatient.id!);
-        await updateDoc(docRef, data);
+        await updateDoc(docRef, patientPayload);
         await logAction({
           action: 'Update Patient',
           entityType: 'Patient',
@@ -122,7 +131,8 @@ export default function PatientManager() {
         toast.success(t('patient_updated') || 'Patient updated');
       } else {
         const docRef = await addDoc(collection(db, 'patients'), {
-          ...data,
+          ...patientPayload,
+          clinicId: profile?.clinicId,
           createdAt: new Date().toISOString()
         });
         await logAction({
@@ -216,16 +226,63 @@ export default function PatientManager() {
 
   return (
     <div className="space-y-4 lg:space-y-6 h-full flex flex-col">
-      <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input 
-            type="text" 
-            placeholder={t('search_patients') || 'Search patients...'}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-10 py-3 sm:py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:border-indigo-500 outline-none transition-all"
-          />
+      {/* Patients Hub Zone Tab-Switcher */}
+      <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl w-fit border border-slate-200/50 shadow-sm shrink-0">
+        <button
+          onClick={() => setActiveSubTab('directory')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            activeSubTab === 'directory'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <Users size={14} />
+          Patients Directory
+        </button>
+        <button
+          onClick={() => setActiveSubTab('prescription')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            activeSubTab === 'prescription'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <FilePlus size={14} />
+          Write Prescription
+        </button>
+        <button
+          onClick={() => setActiveSubTab('followup')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide uppercase transition-all duration-300 ${
+            activeSubTab === 'followup'
+              ? 'bg-slate-950 text-white shadow-md'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <CalendarPlus size={14} />
+          Clinical Follow-ups
+        </button>
+      </div>
+
+      {activeSubTab === 'prescription' ? (
+        <div className="flex-1 overflow-y-auto">
+          <PrescriptionPad profile={profile} />
+        </div>
+      ) : activeSubTab === 'followup' ? (
+        <div className="flex-1 overflow-y-auto">
+          <FollowUpManager profile={profile} />
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="text" 
+                placeholder={t('search_patients') || 'Search patients...'}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-10 pr-10 py-3 sm:py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:border-indigo-500 outline-none transition-all"
+              />
           {search && (
             <button 
               onClick={() => setSearch('')}
@@ -272,6 +329,13 @@ export default function PatientManager() {
                     </div>
                   </div>
                   <div className="flex gap-1 shrink-0">
+                    <button 
+                      onClick={() => setViewingVault(p)}
+                      className="tap-target text-slate-400 hover:text-brand-600 rounded-xl transition-colors"
+                      title="Medical Vault"
+                    >
+                      <ShieldCheck size={18} />
+                    </button>
                     <button 
                       onClick={() => setAnalyzingPatient(p)}
                       className="tap-target text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors"
@@ -522,6 +586,13 @@ export default function PatientManager() {
                             <CalendarPlus size={16} />
                           </button>
                           <button 
+                            onClick={() => setViewingVault(p)}
+                            className="p-2 text-brand-600 hover:bg-white rounded-xl hover:shadow-sm border border-transparent hover:border-slate-200 transition-all font-bold"
+                            title="Medical Vault"
+                          >
+                            <ShieldCheck size={16} />
+                          </button>
+                          <button 
                             onClick={() => setAnalyzingPatient(p)}
                             className="p-2 text-indigo-600 hover:bg-white rounded-xl hover:shadow-sm border border-transparent hover:border-slate-200 transition-all font-bold"
                             title="AI Clinical Diagnosis"
@@ -582,6 +653,8 @@ export default function PatientManager() {
           </div>
         </div>
       </div>
+      </>
+      )}
 
       <PatientModal
         isOpen={isAdding}
@@ -597,6 +670,12 @@ export default function PatientManager() {
           <PatientAIAnalyzer 
             patient={analyzingPatient} 
             onClose={() => setAnalyzingPatient(null)} 
+          />
+        )}
+        {viewingVault && (
+          <PatientReportVault
+            patient={viewingVault}
+            onClose={() => setViewingVault(null)}
           />
         )}
         {viewingBilling && (
@@ -626,7 +705,7 @@ export default function PatientManager() {
               </div>
               
               <div className="p-8 overflow-y-auto">
-                <PatientBillingHistory patient={viewingBilling} doctor={doctorProfile} />
+                <PatientBillingHistory patient={viewingBilling} doctor={profile} />
               </div>
 
               <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-between items-center">

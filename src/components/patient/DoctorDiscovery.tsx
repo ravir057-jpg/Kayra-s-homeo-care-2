@@ -41,47 +41,47 @@ export default function DoctorDiscovery({ onSelect }: DoctorDiscoveryProps) {
   return (
     <div className="space-y-8">
       {/* Search Header */}
-      <div className="bg-white p-6 sm:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6">
-        <div className="flex flex-col md:flex-row gap-4">
+      <div className="bg-white p-6 sm:p-10 rounded-[3rem] border border-slate-100 shadow-sm space-y-8">
+        <div className="flex flex-col md:flex-row gap-5">
           <div className="flex-1 relative group">
-            <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-500 transition-colors">
-              <Search size={22} />
+            <div className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-600 transition-colors">
+              <Search size={24} />
             </div>
             <input 
               type="text" 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by doctor name or specialty..."
-              className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all outline-none font-bold text-slate-800"
+              className="w-full pl-16 pr-8 py-6 bg-slate-50 border border-slate-100 rounded-3xl focus:bg-white focus:border-brand-600 focus:ring-8 focus:ring-brand-600/5 transition-all outline-none font-bold text-slate-800 text-sm"
             />
           </div>
-          <div className="relative group min-w-[200px]">
-            <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-500 transition-colors">
-              <MapPin size={22} />
+          <div className="relative group min-w-[240px]">
+            <div className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-600 transition-colors">
+              <MapPin size={24} />
             </div>
             <input 
               type="text" 
               value={cityFilter}
               onChange={(e) => setCityFilter(e.target.value)}
               placeholder="Area / City..."
-              className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all outline-none font-bold text-slate-800"
+              className="w-full pl-16 pr-8 py-6 bg-slate-50 border border-slate-100 rounded-3xl focus:bg-white focus:border-brand-600 focus:ring-8 focus:ring-brand-600/5 transition-all outline-none font-bold text-slate-800 text-sm"
             />
           </div>
           <button 
             onClick={() => setShowFilters(!showFilters)}
-            className={`p-5 rounded-2xl transition-all flex items-center justify-center gap-2 font-bold uppercase tracking-widest text-[10px] ${showFilters ? 'bg-brand-600 text-white shadow-xl shadow-brand-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+            className={`p-6 rounded-3xl transition-all flex items-center justify-center gap-2 font-black uppercase tracking-widest text-xs ${showFilters ? 'bg-brand-600 text-white shadow-xl shadow-brand-200' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}
           >
-            <Filter size={18} /> Filters
+            <Filter size={20} />
           </button>
         </div>
 
         {/* Categories Scroller */}
-        <div className="flex gap-2 overflow-x-auto no-scrollbar mask-linear-r pb-2">
+        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
           {specialties.map(spec => (
             <button
               key={spec}
               onClick={() => setActiveSpecialty(spec)}
-              className={`px-6 py-3 rounded-xl whitespace-nowrap text-xs font-black uppercase tracking-widest transition-all ${activeSpecialty === spec ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-50 text-slate-400 hover:text-slate-600'}`}
+              className={`px-8 py-4 rounded-2xl whitespace-nowrap text-xs font-black uppercase tracking-widest transition-all ${activeSpecialty === spec ? 'bg-brand-600 text-white shadow-lg shadow-brand-100' : 'bg-white text-slate-400 border border-slate-100 hover:text-brand-600 hover:border-brand-100'}`}
             >
               {spec}
             </button>
@@ -176,9 +176,9 @@ export default function DoctorDiscovery({ onSelect }: DoctorDiscoveryProps) {
 
                 <button 
                   onClick={() => onSelect(doc)}
-                  className="w-full py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-xl shadow-slate-200 hover:bg-brand-600 hover:shadow-brand-200 transition-all active:scale-[0.98] flex items-center justify-center gap-2 group"
+                  className="w-full py-5 bg-brand-600 text-white rounded-[1.5rem] text-xs font-black uppercase tracking-[0.2em] shadow-xl shadow-brand-100 hover:bg-brand-700 transition-all active:scale-[0.98] flex items-center justify-center gap-3 group"
                 >
-                  Confirm Presence <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                  Book Session <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                 </button>
               </motion.div>
             ))}

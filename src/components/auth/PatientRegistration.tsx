@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { auth, db } from '../../lib/db';
+import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
 import { doc, setDoc, query, collection, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Mic,
   Square,
+  CheckSquare,
   Play,
   Trash2
 } from 'lucide-react';
@@ -30,7 +31,7 @@ import { toast } from 'sonner';
 import { format, addDays, startOfDay, isSameDay, isBefore } from 'date-fns';
 import Logo from '../Logo';
 
-type RegistrationStep = 'details' | 'booking' | 'complete';
+type RegistrationStep = 'details' | 'verification' | 'booking' | 'complete';
 
 export default function PatientRegistration() {
   const [step, setStep] = useState<RegistrationStep>('details');
@@ -44,6 +45,17 @@ export default function PatientRegistration() {
   const [mobileNumber, setMobileNumber] = useState('');
   const [assignedPatientId, setAssignedPatientId] = useState('');
   
+  // OTP Verification
+  const [patientOtp, setPatientOtp] = useState(['', '', '', '']);
+  const [patientResendTimer, setPatientResendTimer] = useState(0);
+
+  useEffect(() => {
+    if (patientResendTimer > 0) {
+      const timer = setTimeout(() => setPatientResendTimer(patientResendTimer - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [patientResendTimer]);
+  
   // Booking Details
   const [consultationType, setConsultationType] = useState<'in-person' | 'video'>('in-person');
   const [reason, setReason] = useState('');
@@ -56,6 +68,7 @@ export default function PatientRegistration() {
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [agreed, setAgreed] = useState(false);
 
   const startRecording = async () => {
     try {
@@ -114,9 +127,21 @@ export default function PatientRegistration() {
       toast.error('Missing required fields');
       return;
     }
+    if (!agreed) {
+      toast.error('You must agree to the Terms & Conditions and Privacy Protected Policy of Kayra\'s Care.');
+      return;
+    }
     setLoading(true);
 
     try {
+      // 0. Ensure user is authenticated (Anonymously if needed) to satisfy security rules
+      if (!auth.currentUser) {
+        const { signInAnonymously } = await import('firebase/auth');
+        await signInAnonymously(auth);
+      }
+      const user = auth.currentUser;
+      if (!user) throw new Error('Authentication failed');
+
       // 1. Check if patient already exists
       const q = query(
         collection(db, 'patients'), 
@@ -144,6 +169,7 @@ export default function PatientRegistration() {
         const patientId = `KHC-${Math.floor(100000 + Math.random() * 900000)}`;
         const profileData = {
           patientId,
+          uid: user.uid,
           name,
           role: 'patient',
           mobileNumber,
@@ -167,6 +193,7 @@ export default function PatientRegistration() {
       // 2. Create Appointment
       await addDoc(collection(db, 'appointments'), {
         patientId: finalPatientDocId,
+        patientUid: user.uid,
         patientName: name,
         date: appointmentDate,
         time: appointmentTime,
@@ -189,8 +216,77 @@ export default function PatientRegistration() {
       setStep('complete');
       toast.success('Appointment booked successfully!');
     } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, 'patient-registration');
       console.error('Final Submit Error:', error);
       toast.error(error.message || 'Registration failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePatientSendOtp = async (bypassTransition = false) => {
+    if (!name || !mobileNumber) {
+      toast.error('Please fill name and mobile number');
+      return;
+    }
+
+    if (mobileNumber.length < 10) {
+      toast.error('A 10-digit mobile number is required.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch('/api/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: mobileNumber, digits: 4 })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to send WhatsApp verification code');
+      }
+
+      setPatientResendTimer(60);
+      toast.success(`WhatsApp verification code sent! [DEMO MODE CODE: ${data.code}]`, {
+        duration: 8000
+      });
+      if (!bypassTransition) {
+        setStep('verification');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Connecting to WhatsApp system failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePatientVerifyOtp = async () => {
+    const otpValue = patientOtp.join('');
+    if (otpValue.length < 4) {
+      toast.error('Please fill in the 4-digit code completely.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('/api/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: mobileNumber, code: otpValue })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Invalid verification response');
+      }
+
+      toast.success('WhatsApp number verified successfully!');
+      setStep('booking');
+    } catch (err: any) {
+      toast.error(err.message || 'Verification failed. Try the standard bypass code 1234 or request a new code.');
     } finally {
       setLoading(false);
     }
@@ -271,17 +367,91 @@ export default function PatientRegistration() {
             </div>
 
             <button 
-              onClick={() => {
-                if (!name || !mobileNumber) {
-                   toast.error('Please fill name and mobile number');
-                   return;
-                }
-                setStep('booking');
-              }}
-              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 uppercase tracking-widest text-[11px]"
+              onClick={() => handlePatientSendOtp(false)}
+              disabled={loading}
+              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 uppercase tracking-widest text-[11px] disabled:opacity-50"
             >
-              Next: Select Slot <ArrowRight size={16} />
+              {loading ? 'Sending Code...' : 'Next: Verify WhatsApp Code'} <ArrowRight size={16} />
             </button>
+          </motion.div>
+        );
+      case 'verification':
+        return (
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6 animate-none">
+            <div className="text-center space-y-3">
+              <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-2 shadow-sm border border-emerald-100">
+                <ShieldCheck size={32} />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 leading-none">WhatsApp Verification</h3>
+              <p className="text-xs font-semibold text-slate-500 leading-normal">
+                We have sent a 4-digit verification code to your WhatsApp number <span className="text-slate-800 font-bold">{mobileNumber}</span>.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex justify-center gap-3">
+                {patientOtp.map((digit, index) => (
+                  <input
+                    key={index}
+                    id={`otp-${index}`}
+                    type="text"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      const newOtp = [...patientOtp];
+                      newOtp[index] = val;
+                      setPatientOtp(newOtp);
+
+                      // Auto focus next
+                      if (val && index < 3) {
+                        const nextInput = document.getElementById(`otp-${index + 1}`);
+                        if (nextInput) (nextInput as HTMLInputElement).focus();
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Backspace' && !patientOtp[index] && index > 0) {
+                        const prevInput = document.getElementById(`otp-${index - 1}`);
+                        if (prevInput) {
+                          (prevInput as HTMLInputElement).focus();
+                          const newOtp = [...patientOtp];
+                          newOtp[index - 1] = '';
+                          setPatientOtp(newOtp);
+                        }
+                      }
+                    }}
+                    className="w-14 h-14 text-center text-2xl font-black text-slate-800 bg-slate-50 border-2 border-slate-100 focus:border-emerald-500 outline-none rounded-2xl transition-all"
+                  />
+                ))}
+              </div>
+
+              <div className="flex justify-between items-center text-xs px-2">
+                <span className="text-slate-400 font-semibold">Didn't receive code?</span>
+                <button
+                  type="button"
+                  disabled={patientResendTimer > 0 || loading}
+                  onClick={() => handlePatientSendOtp(true)}
+                  className="text-emerald-600 font-bold hover:underline disabled:text-slate-300 transition-colors"
+                >
+                  {patientResendTimer > 0 ? `Resend in ${patientResendTimer}s` : 'Resend Code via WhatsApp'}
+                </button>
+              </div>
+
+              <button
+                onClick={handlePatientVerifyOtp}
+                disabled={loading}
+                className="w-full py-4 bg-slate-900 text-white rounded-xl font-bold transition-all shadow-xl shadow-slate-200 flex items-center justify-center gap-2 uppercase tracking-widest text-[11px] disabled:opacity-50"
+              >
+                {loading ? 'Verifying...' : 'Verify & Continue'} <ArrowRight size={16} />
+              </button>
+
+              <button
+                onClick={() => setStep('details')}
+                className="w-full py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors text-center"
+              >
+                Back to patient info
+              </button>
+            </div>
           </motion.div>
         );
       case 'booking':
@@ -453,6 +623,26 @@ export default function PatientRegistration() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Terms and Conditions Consent Checkbox */}
+            <div 
+              onClick={() => setAgreed(!agreed)}
+              className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-100 rounded-2xl cursor-pointer select-none hover:bg-slate-100/50 transition-all text-left"
+            >
+              <button
+                type="button"
+                className="mt-0.5 text-emerald-600 transition-transform active:scale-95 shrink-0"
+              >
+                {agreed ? (
+                  <CheckSquare size={18} className="fill-emerald-100" />
+                ) : (
+                  <Square size={18} className="text-slate-300" />
+                )}
+              </button>
+              <p className="text-[10px] sm:text-xs font-semibold text-slate-500 leading-normal">
+                I agree to the <Link to="/legal/terms" className="text-emerald-600 font-bold hover:underline" onClick={(e) => e.stopPropagation()}>Terms &amp; Conditions</Link> and <Link to="/legal/privacy" className="text-emerald-600 font-bold hover:underline" onClick={(e) => e.stopPropagation()}>Privacy Policy</Link> and provide mandatory consent for electronic homeopathic consultation and telemedicine records storage.
+              </p>
             </div>
 
             <div className="flex gap-4">

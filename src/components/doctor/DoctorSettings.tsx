@@ -22,6 +22,8 @@ import { UserProfile } from '../../types';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/db';
 import { toast } from 'sonner';
+import AuditLogs from './AuditLogs';
+import SupabaseDashboard from './SupabaseDashboard';
 
 interface DoctorSettingsProps {
   profile: UserProfile | null;
@@ -193,6 +195,20 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
             icon={<Database size={18} />} 
             active={activeSection === 'database'} 
             onClick={() => setActiveSection('database')}
+          />
+          <SettingsNavLink 
+            id="logs" 
+            label="Audit Trail" 
+            icon={<Shield size={18} />} 
+            active={activeSection === 'logs'} 
+            onClick={() => setActiveSection('logs')}
+          />
+          <SettingsNavLink 
+            id="supabase" 
+            label="Supabase Engine" 
+            icon={<Database size={18} />} 
+            active={activeSection === 'supabase'} 
+            onClick={() => setActiveSection('supabase')}
           />
         </aside>
 
@@ -443,6 +459,20 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
                 </div>
               </div>
 
+              <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck size={20} className="text-indigo-600 mt-1" />
+                  <div>
+                    <h5 className="text-sm font-bold text-indigo-900">Platform Commission</h5>
+                    <p className="text-xs text-indigo-700 font-medium mb-2">Automated deduction on every digital payment settlement.</p>
+                    <div className="flex items-center gap-2">
+                       <span className="px-3 py-1 bg-indigo-600 text-white rounded-lg font-black text-sm">{profile?.commissionRate || 10}%</span>
+                       <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest italic">Current Rate</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="p-6 bg-emerald-900 rounded-[2rem] text-white relative overflow-hidden">
                 <div className="relative z-10">
                   <h5 className="font-bold text-lg mb-2">Instant Billing</h5>
@@ -539,6 +569,18 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
                   <button className="text-emerald-600 text-sm font-bold uppercase tracking-wider hover:underline">Configure</button>
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {activeSection === 'logs' && (
+            <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
+              <AuditLogs profile={profile} />
+            </motion.div>
+          )}
+
+          {activeSection === 'supabase' && (
+            <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
+              <SupabaseDashboard />
             </motion.div>
           )}
         </div>
