@@ -2,5 +2,5 @@
   "name": "Kayra's Homoeo. Care",
   "description": "Premium clinical management sanctuary for homeopathy. AI-powered diagnostics, HIPAA-secure patient records, and holistic clinical workflows.",
   "requestFramePermissions": ["camera", "microphone"],
-  "majorCapabilities": ["AI Diagnostics", "Patient Management", "Inventory Control", "Billing"]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API", "AI Diagnostics", "Patient Management", "Inventory Control", "Billing"]
 }

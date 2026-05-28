@@ -72,6 +72,7 @@ import AppointmentBooking from './AppointmentBooking';
 import Logo from '../Logo';
 
 import WhatsAppButton from '../shared/WhatsAppButton';
+import ConsentModal from '../shared/ConsentModal';
 
 export default function PatientPortal() {
   const { t } = useLanguage();
@@ -139,6 +140,47 @@ export default function PatientPortal() {
   const [isRecording, setIsRecording] = useState(false);
   const [cancellingAppt, setCancellingAppt] = useState<Appointment | null>(null);
 
+  const [hasAcceptedConsent, setHasAcceptedConsent] = useState(() => {
+    return localStorage.getItem('kayra_legal_consent_accepted') === 'true';
+  });
+  const [consentModalConfig, setConsentModalConfig] = useState<{
+    isOpen: boolean;
+    actionLabel: string;
+    onAccept: () => void;
+  } | null>(null);
+
+  const executeWithConsent = (actionLabel: string, onAccept: () => void) => {
+    if (localStorage.getItem('kayra_legal_consent_accepted') === 'true' || hasAcceptedConsent) {
+      onAccept();
+    } else {
+      setConsentModalConfig({
+        isOpen: true,
+        actionLabel,
+        onAccept
+      });
+    }
+  };
+
+  const triggerBooking = (doctor: UserProfile | null) => {
+    executeWithConsent('Book Clinical Consult', () => {
+      setSelectedDoctor(doctor || doctors[0] || null);
+      setIsBooking(true);
+    });
+  };
+
+  const triggerDoctorBooking = (dr: UserProfile) => {
+    executeWithConsent('Confirm Booking', () => {
+      setSelectedDoctor(dr);
+      setIsBookingDoctor(true);
+    });
+  };
+
+  const triggerActiveCall = (appt: Appointment) => {
+    executeWithConsent('Proceed to Consultation', () => {
+      setActiveCall(appt);
+    });
+  };
+
   const handleLogSymptom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!patientData?.id) return;
@@ -182,6 +224,14 @@ export default function PatientPortal() {
     const file = e.target.files?.[0];
     const user = auth.currentUser;
     if (!file || !user || !patientData?.id) return;
+
+    if (!hasAcceptedConsent && localStorage.getItem('kayra_legal_consent_accepted') !== 'true') {
+      e.target.value = '';
+      executeWithConsent('Proceed to Upload & Analysis', () => {
+        toast.info("Clinical consent received. Please click 'Add to Vault' again to choose and upload your file.");
+      });
+      return;
+    }
 
     if (file.size > 10 * 1024 * 1024) {
       toast.error("File size exceeds 10MB limit");
@@ -232,34 +282,36 @@ export default function PatientPortal() {
       return;
     }
 
-    try {
-      setAnalyzingReportId(report.id);
-      const analysis = await analyzeMedicalReport(
-        { data: report.fileData, mimeType: report.fileType },
-        `This is a report for ${patientData?.name}. Analyze abnormal values and map them to Homeopathic Generalities/Rubrics.`,
-        `Patient: ${patientData?.name}`
-      );
-
-      const path = 'medical_reports';
+    executeWithConsent('Analyze Report', async () => {
       try {
-        await updateDoc(doc(db, path, report.id), {
-          summary: analysis.split('\n').find(l => l.length > 20) || 'Analysis complete.',
-          fullAnalysis: analysis,
-          status: 'Analyzed',
-          analyzedAt: new Date().toISOString()
-        });
-        toast.success("AI Analysis complete and synced to clinic");
-        if (selectedReportForView?.id === report.id) {
-          setSelectedReportForView(prev => ({ ...prev, status: 'Analyzed', fullAnalysis: analysis }));
+        setAnalyzingReportId(report.id);
+        const analysis = await analyzeMedicalReport(
+          { data: report.fileData, mimeType: report.fileType },
+          `This is a report for ${patientData?.name}. Analyze abnormal values and map them to Homeopathic Generalities/Rubrics.`,
+          `Patient: ${patientData?.name}`
+        );
+
+        const path = 'medical_reports';
+        try {
+          await updateDoc(doc(db, path, report.id), {
+            summary: analysis.split('\n').find(l => l.length > 20) || 'Analysis complete.',
+            fullAnalysis: analysis,
+            status: 'Analyzed',
+            analyzedAt: new Date().toISOString()
+          });
+          toast.success("AI Analysis complete and synced to clinic");
+          if (selectedReportForView?.id === report.id) {
+            setSelectedReportForView(prev => ({ ...prev, status: 'Analyzed', fullAnalysis: analysis }));
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, path);
         }
       } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, path);
+        toast.error("AI Analysis failed");
+      } finally {
+        setAnalyzingReportId(null);
       }
-    } catch (error) {
-      toast.error("AI Analysis failed");
-    } finally {
-      setAnalyzingReportId(null);
-    }
+    });
   };
 
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
@@ -1121,8 +1173,7 @@ export default function PatientPortal() {
                             </div>
                             <button 
                               onClick={() => {
-                                setSelectedDoctor(dr);
-                                setIsBookingDoctor(true);
+                                triggerDoctorBooking(dr);
                               }}
                               className="px-4 py-2 bg-white border border-slate-200 text-slate-900 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-600 hover:text-white hover:border-brand-600 transition-all shadow-sm"
                             >
@@ -1529,8 +1580,7 @@ export default function PatientPortal() {
                     </div>
                     <button 
                       onClick={() => {
-                        setSelectedDoctor(doctors[0] || null);
-                        setIsBooking(true);
+                        triggerBooking(doctors[0] || null);
                       }}
                       className="px-10 py-5 bg-white text-emerald-700 hover:bg-slate-50 rounded-2xl text-xs font-black uppercase tracking-widest transition-all active:scale-95 shadow-xl shadow-emerald-950/10 cursor-pointer shrink-0"
                     >
@@ -1667,11 +1717,13 @@ export default function PatientPortal() {
                               <div className="flex gap-2">
                                 <button 
                                   onClick={() => {
-                                    setReschedulingAppt(appt);
-                                    const dr = doctors.find(d => d.uid === appt.doctorId) || doctors[0];
-                                    setSelectedDoctor(dr || null);
-                                    setIsRescheduling(true);
-                                    setIsBookingDoctor(true);
+                                    executeWithConsent('Proceed to Rescheduling', () => {
+                                      setReschedulingAppt(appt);
+                                      const dr = doctors.find(d => d.uid === appt.doctorId) || doctors[0];
+                                      setSelectedDoctor(dr || null);
+                                      setIsRescheduling(true);
+                                      setIsBookingDoctor(true);
+                                    });
                                   }}
                                   className="flex-1 sm:flex-none px-6 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-xl shadow-slate-200 cursor-pointer text-center"
                                 >
@@ -1687,7 +1739,7 @@ export default function PatientPortal() {
                             )}
                             {appt.status === 'Scheduled' && appt.type === 'Online' && (
                               <button 
-                                onClick={() => setActiveCall(appt)}
+                                onClick={() => triggerActiveCall(appt)}
                                 className="flex-1 sm:flex-none px-6 py-4 bg-indigo-600 text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 shadow-lg shadow-indigo-100"
                               >
                                 Join Consult
@@ -2031,8 +2083,7 @@ export default function PatientPortal() {
             {currentTab === 'doctors' && (
               <DoctorDiscovery 
                 onSelect={(dr) => {
-                  setSelectedDoctor(dr);
-                  setIsBookingDoctor(true);
+                  triggerDoctorBooking(dr);
                 }} 
               />
             )}
@@ -3154,6 +3205,20 @@ export default function PatientPortal() {
           </div>
         )}
       </AnimatePresence>
+
+      {consentModalConfig && (
+        <ConsentModal
+          isOpen={consentModalConfig.isOpen}
+          onClose={() => setConsentModalConfig(null)}
+          onAccept={() => {
+            localStorage.setItem('kayra_legal_consent_accepted', 'true');
+            setHasAcceptedConsent(true);
+            consentModalConfig.onAccept();
+          }}
+          actionLabel={consentModalConfig.actionLabel}
+        />
+      )}
+
       <ElderlyCareBar clinicInfo={clinicInfo} appointments={appointments} />
     </div>
   );

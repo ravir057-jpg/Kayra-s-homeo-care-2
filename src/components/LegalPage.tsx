@@ -1,6 +1,6 @@
 import { motion } from 'motion/react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Shield, FileText, Lock, Eye, Scale, Send, MessageSquare } from 'lucide-react';
+import { ArrowLeft, Shield, FileText, Lock, Eye, Scale, Send, MessageSquare, AlertTriangle } from 'lucide-react';
 import Logo from './Logo';
 import Footer from './Footer';
 import { toast } from 'sonner';
@@ -17,7 +17,7 @@ export default function LegalPage() {
   };
 
   const content = type === 'privacy' ? {
-    title: 'Privacy Policy',
+    title: 'Privacy Policy & Clinical Consent',
     lastUpdated: 'May 2026',
     icon: Shield,
     color: 'emerald' as const,
@@ -36,6 +36,11 @@ export default function LegalPage() {
         title: '3. Data Retention & Secrecy',
         icon: Lock,
         text: 'Clinical records are maintained for a minimum of 3 years as per NCH regulations. Practitioners are bound by professional secrecy under the Homoeopathy Central Council (Professional Conduct) Regulations.'
+      },
+      {
+        title: '4. Telemedicine Patient Consent Form',
+        icon: FileText,
+        text: 'By using this service, you consent to transmission of electronic health records to a licensed physician. You recognize that telemedicine has inherent virtual limitations and does not substitute a physical, emergency consultation.'
       }
     ]
   } : {
@@ -57,7 +62,12 @@ export default function LegalPage() {
       {
         title: '3. Clinical Responsibility',
         icon: Lock,
-        text: 'The RMP maintains ultimate responsibility for the diagnosis and treatment provided. AI-based repertory suggestions are supportive tools and must be validated by the practitioner\'s clinical judgment.'
+         text: 'The RMP maintains ultimate responsibility for the diagnosis and treatment provided. AI-based repertory suggestions are supportive tools and must be validated by the practitioner\'s clinical judgment.'
+      },
+      {
+        title: '4. Medical Disclaimer & Limitation of Liability',
+        icon: AlertTriangle,
+        text: 'All tools provided, including the Report Analyser, are purely for support and do not furnish diagnosis or treatment plans. We claim no liability for consequences of relying on automated health interpretations. Patient discretion is strictly advised.'
       }
     ]
   };
