@@ -3,7 +3,8 @@ import { Invoice } from '../../types';
 import { FileText, Download, Clock, CheckCircle2, AlertCircle, CreditCard } from 'lucide-react';
 import { format } from 'date-fns';
 import { processPayment } from '../../services/paymentService';
-import { auth } from '../../lib/db';
+import { auth, db } from '../../lib/db';
+import { doc, getDoc } from 'firebase/firestore';
 import axios from 'axios';
 
 interface PatientBillingHistoryProps {
@@ -26,7 +27,21 @@ export default function PatientBillingHistory({ invoices, onDownload, onPaymentS
         console.error("Failed to get default key", err);
       }
 
-      await processPayment(inv.amount, {
+      // Dynamic Payment Amounts: passes the specific fee amount dynamically fetched from the chosen doctor's profile
+      let feeToUse = inv.amount;
+      try {
+        const docSnap = await getDoc(doc(db, 'users', inv.doctorId));
+        if (docSnap.exists()) {
+          const docData = docSnap.data();
+          if (docData.consultationFee) {
+            feeToUse = docData.consultationFee;
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch doctor's dynamic fee, using invoice default amount:", e);
+      }
+
+      await processPayment(feeToUse, {
         razorpayKeyId: keyId,
         invoiceId: inv.id,
         doctorId: inv.doctorId,

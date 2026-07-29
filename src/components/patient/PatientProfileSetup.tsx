@@ -31,10 +31,22 @@ export default function PatientProfileSetup() {
       const user = auth.currentUser;
       const patientId = `KHC-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
       
+      const sessionStr = localStorage.getItem('kayra_patient_session');
+      let mobileNumber = '';
+      if (sessionStr) {
+        try {
+          const session = JSON.parse(sessionStr);
+          mobileNumber = session.mobileNumber || '';
+        } catch (_) {}
+      }
+
       const payload = {
         ...formData,
         patientId,
+        khcId: patientId, // Sync khcId with patientId for blueprint consistency
         uid: user?.uid || null,
+        mobileNumber: mobileNumber,
+        phone: mobileNumber, // Keep phone/mobileNumber symmetry
         createdAt: new Date().toISOString(),
         role: 'patient'
       };
@@ -56,6 +68,7 @@ export default function PatientProfileSetup() {
       localStorage.setItem('kayra_patient_session', JSON.stringify({
         patientId: docRef.id,
         name: formData.name,
+        mobileNumber: mobileNumber,
         loginType: 'onboarding'
       }));
 

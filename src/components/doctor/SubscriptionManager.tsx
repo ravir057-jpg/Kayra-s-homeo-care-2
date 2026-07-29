@@ -86,6 +86,29 @@ export default function SubscriptionManager({ profile }: SubscriptionManagerProp
       return;
     }
 
+    // 1. Differentiate payment token: create backend Order with 'subscription' metadata
+    let orderId = "";
+    try {
+      const orderResponse = await fetch('/api/payment/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: plan.amount,
+          currency: 'INR',
+          receipt: `sub_${auth.currentUser.uid.substring(0, 8)}_${Date.now()}`,
+          doctorId: auth.currentUser.uid,
+          paymentType: 'subscription',
+          planId: plan.id
+        })
+      });
+      if (orderResponse.ok) {
+        const orderData = await orderResponse.json();
+        orderId = orderData.id;
+      }
+    } catch (error) {
+      console.warn("Backend Order Creation failed. Working in client-only fallback mode:", error);
+    }
+
     const options = {
       key: keyId,
       amount: plan.amount * 100,
@@ -93,6 +116,7 @@ export default function SubscriptionManager({ profile }: SubscriptionManagerProp
       name: "Kayra's Homeo Care",
       description: `Subscription for ${plan.name}`,
       image: 'https://cdn-icons-png.flaticon.com/512/3063/3063822.png',
+      order_id: orderId || undefined,
       handler: async function (response: any) {
         try {
           // Success: Update the subscription in Firestore
@@ -102,7 +126,8 @@ export default function SubscriptionManager({ profile }: SubscriptionManagerProp
           await updateDoc(doc(db, 'users', auth.currentUser!.uid), {
             subscription: plan.id,
             subscriptionExpiry: expiryDate.toISOString(),
-            razorpayPaymentId: response.razorpay_payment_id
+            razorpayPaymentId: response.razorpay_payment_id,
+            razorpayOrderId: response.razorpay_order_id || orderId
           });
 
           toast.success(`Payment Successful! Your subscription is now ${plan.name}.`);

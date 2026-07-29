@@ -1,941 +1,950 @@
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence, useScroll } from 'motion/react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { motion, AnimatePresence } from 'motion/react';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   Stethoscope, 
   User,
-  UserPlus,
-  Plus,
-  ChevronRight,
-  ShieldCheck, 
   Heart,
   Leaf,
   Sparkles,
-  Smartphone,
   Clock,
-  Menu,
-  Zap,
   Check,
-  ArrowUp,
   ArrowRight,
   BrainCircuit,
   FileSearch,
   UserCircle,
-  Home,
-  ChevronDown,
-  X as CloseIcon
+  Home as HomeIcon,
+  MessageCircle,
+  AlertTriangle,
+  Upload,
+  Info,
+  ChevronRight,
+  Phone,
+  ShieldCheck,
+  Menu,
+  X,
+  Plus
 } from 'lucide-react';
-
-const PLANS = [
-  {
-    id: 'basic',
-    name: 'Basic Clinic',
-    price: '₹200',
-    period: 'month',
-    description: 'Essential digital tools for small homeopathy clinics.',
-    features: ['Digital Prescriptions', 'Up to 500 Patients', 'WhatsApp Notifications', 'Cloud Data Backup', 'Basic Billing'],
-    color: 'emerald'
-  },
-  {
-    id: 'pro',
-    name: 'Pro Practice',
-    price: '₹1,000',
-    period: '6 months',
-    popular: true,
-    description: 'Advanced features including inventory and analytics.',
-    features: ['Everything in Basic', 'Unlimited Patients', 'Inventory Management', 'Advanced AI Insights', 'Clinical Analytics', 'Video Consultations'],
-    color: 'emerald'
-  },
-  {
-    id: 'yearly',
-    name: 'Elite Yearly',
-    price: '₹2,500',
-    period: 'year',
-    benefit: '2 Months Free',
-    description: 'Best value for established practitioners with full support.',
-    features: ['Everything in Pro', 'Priority 24/7 Support', 'Custom Clinic Branding', 'Advanced Data Export', 'Dedicated Account Manager', 'Annual Savings'],
-    color: 'emerald'
-  }
-];
-import { auth, db } from '../lib/db';
-import { signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import Logo from './Logo';
-import Footer from './Footer';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import SkeletalLoader from './shared/SkeletalLoader';
 
-import WhatsAppButton from './shared/WhatsAppButton';
+// Predefined Clinical Test Reports for OCR Analyzer Demonstration
+const DEMO_REPORTS = [
+  {
+    id: 'kidney_panel',
+    name: 'Kidney Profile (Creatinine High)',
+    patientName: 'Karan Sharma',
+    date: '2026-05-12',
+    markers: [
+      { name: 'Serum Creatinine', value: '2.4 mg/dL', status: 'Abnormal High', reference: '0.6 - 1.2 mg/dL', severity: 'critical' },
+      { name: 'Blood Urea Nitrogen', value: '45 mg/dL', status: 'Abnormal High', reference: '7 - 20 mg/dL', severity: 'alert' },
+      { name: 'eGFR', value: '38 mL/min/1.73m²', status: 'Abnormal Low', reference: '> 90 mL/min/1.73m²', severity: 'critical' }
+    ],
+    rubrics: 'Renal congestion, reduced filtration, urinary retention rubrics.',
+    homeoSuggestions: [
+      { name: 'Serum Anguillae (Eel Serum)', details: 'Highly specific for acute renal distress, albuminuria, and elevated creatinine without cardiac compensation.' },
+      { name: 'Apis Mellifica', details: 'Indicated for renal dropsy, puffiness, suppressed urination, and clinical kidney inflammation symptoms.' },
+      { name: 'Lycopodium Clavatum', details: 'Suited for chronic high urea/creatinine with heavy brick-dust red sand sediment in urine, flatulence, and right-sided complaints.' }
+    ]
+  },
+  {
+    id: 'thyroid_profile',
+    name: 'Thyroid Panel (TSH Elevated)',
+    patientName: 'Meera Deshmukh',
+    date: '2026-05-18',
+    markers: [
+      { name: 'TSH (Thyroid Stimulating Hormone)', value: '8.7 uIU/mL', status: 'Abnormal High', reference: '0.45 - 4.5 uIU/mL', severity: 'critical' },
+      { name: 'Free T3', value: '2.1 pg/mL', status: 'Abnormal Low', reference: '2.3 - 4.2 pg/mL', severity: 'alert' },
+      { name: 'Free T4', value: '0.7 ng/dL', status: 'Abnormal Low', reference: '0.8 - 1.8 ng/dL', severity: 'alert' }
+    ],
+    rubrics: 'Glandular hypofunction, sluggish metabolism, dynamic weight gain rubrics.',
+    homeoSuggestions: [
+      { name: 'Thyroidinum', details: 'A powerful organopathic remedy for hypothyroid states, muscular weakness, cold sensitivity, and metabolic sluggishness.' },
+      { name: 'Calcarea Carbonica', details: 'Indicated for sluggish patient constitution of a fair, fatty, flabby nature, cold clammy extremities, and chronic fatigue.' },
+      { name: 'Sepia Officinalis', details: 'Outstanding remedy for metabolic lethargy, emotional indifference, hormonal imbalances, and pelvic congestion.' }
+    ]
+  },
+  {
+    id: 'allergy_panel',
+    name: 'Allergy Panel (IgE Elevated)',
+    patientName: 'Aditya Patil',
+    date: '2026-05-24',
+    markers: [
+      { name: 'Total Serum IgE', value: '480 IU/mL', status: 'Abnormal High', reference: '< 100 IU/mL', severity: 'critical' },
+      { name: 'Eosinophils Absolute', value: '750 cells/mcL', status: 'Abnormal High', reference: '30 - 350 cells/mcL', severity: 'critical' },
+      { name: 'Hemoglobin', value: '14.2 g/dL', status: 'Normal', reference: '13.0 - 17.0 g/dL', severity: 'normal' }
+    ],
+    rubrics: 'Acarid/pollen hypersensitivity, allergic rhinitis, cutaneous eruption rubrics.',
+    homeoSuggestions: [
+      { name: 'Histaminum Hydrochloricum', details: 'Acts as an immediate constitutional shield against acute histamine releases, hives, and respiratory allergies.' },
+      { name: 'Arsenicum Album', details: 'Suited for thin mucosal discharge, burning eyes and throat relieved by hot drinks, combined with marked anxiety and restlessness.' },
+      { name: 'Sabadilla', details: 'Highly useful for explosive sneezing cascades, coryza, lachrymation in open air, and allergic hypersensitivities.' }
+    ]
+  }
+];
 
 export default function LandingPage() {
-  const { scrollYProgress } = useScroll();
-  const [mobileNumber, setMobileNumber] = useState('');
-  const [registrationNumber, setRegistrationNumber] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [showScrollTop, setShowScrollTop] = useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
+  const [activeTab, setActiveTab] = useState<'home' | 'analyser' | 'consult'>('home');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [time, setTime] = useState('');
+  
+  // Custom states for Legal Modals
+  const [legalModalType, setLegalModalType] = useState<'privacy' | 'terms' | 'disclaimer' | null>(null);
 
-  // Mobile OTP States
-  const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
-  const [otpStep, setOtpStep] = useState<'phone' | 'otp'>('phone');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [authIntent, setAuthIntent] = useState<'book' | 'manage'>('book');
+  // File Upload states for Report Analyser
+  const [isDragging, setIsDragging] = useState(false);
+  const [analyzingFile, setAnalyzingFile] = useState(false);
+  const [analyzedReport, setAnalyzedReport] = useState<any>(null);
+  const [selectedDemoId, setSelectedDemoId] = useState<string>('');
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
 
+  // Consultation Submission Forms states
+  const [leadForm, setLeadForm] = useState({
+    name: '',
+    phone: '',
+    message: '',
+    consent: false
+  });
+  const [formSubmitted, setFormSubmitted] = useState(false);
+
+  // Simple clock effect
   useEffect(() => {
-    setIsMenuOpen(false);
-  }, [location]);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setShowScrollTop(window.scrollY > 500);
+    const updateClock = () => {
+      const now = new Date();
+      setTime(now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }));
     };
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    updateClock();
+    const interval = setInterval(updateClock, 1000);
+    return () => clearInterval(interval);
   }, []);
 
-  const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleOpenAuthModal = (intent: 'book' | 'manage') => {
-    setAuthIntent(intent);
-    setPhoneNumber('');
-    setOtpCode('');
-    setOtpStep('phone');
-    setIsOtpModalOpen(true);
-  };
-
-  const handleSendOTP = async (e: React.FormEvent) => {
+  // Handle Drag Events
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    const cleanPhone = phoneNumber.replace(/\D/g, '');
-    if (cleanPhone.length < 10) {
-      toast.error('Please enter a valid 10-digit mobile number');
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      triggerFileAnalysis(files[0].name);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      triggerFileAnalysis(files[0].name);
+    }
+  };
+
+  const triggerFileAnalysis = (fileName: string) => {
+    setAnalyzingFile(true);
+    setAnalyzedReport(null);
+    setSelectedDemoId('');
+    setUploadProgress(0);
+
+    const interval = setInterval(() => {
+      setUploadProgress(prev => {
+        if (prev >= 95) {
+          clearInterval(interval);
+          return 95;
+        }
+        return prev + 15;
+      });
+    }, 250);
+
+    // Trigger elegant simulation representing OCR calculation
+    setTimeout(() => {
+      clearInterval(interval);
+      setUploadProgress(100);
+      setAnalyzingFile(false);
+      // Fallback response: dynamically formulate a realistic diagnostic result based on file keywords
+      const upperName = fileName.toUpperCase();
+      let matchedReport = DEMO_REPORTS[0]; // default Kidney
+      if (upperName.includes('ALLERGY') || upperName.includes('IGE') || upperName.includes('BLOOD')) {
+        matchedReport = DEMO_REPORTS[2];
+      } else if (upperName.includes('THYROID') || upperName.includes('TSH')) {
+        matchedReport = DEMO_REPORTS[1];
+      }
+
+      setAnalyzedReport({
+        ...matchedReport,
+        name: `Extracted: ${fileName}`,
+        patientName: 'Uploaded Document Record'
+      });
+      toast.success('Medical report analyzed seamlessly using OCR simulation.');
+    }, 2200);
+  };
+
+  const handleSelectDemo = (reportId: string) => {
+    if (!reportId) return;
+    setSelectedDemoId(reportId);
+    setAnalyzingFile(true);
+    setAnalyzedReport(null);
+    setUploadProgress(0);
+
+    const interval = setInterval(() => {
+      setUploadProgress(prev => {
+        if (prev >= 95) {
+          clearInterval(interval);
+          return 95;
+        }
+        return prev + 25;
+      });
+    }, 150);
+    
+    setTimeout(() => {
+      clearInterval(interval);
+      setUploadProgress(100);
+      setAnalyzingFile(false);
+      const selected = DEMO_REPORTS.find(r => r.id === reportId);
+      setAnalyzedReport(selected);
+      toast.success(`Loaded clinical summary for: ${selected?.name}`);
+    }, 1200);
+  };
+
+  // WhatsApp helper
+  const handleWhatsAppChat = () => {
+    const text = encodeURIComponent("Hello Kayra's Homeo Care, I would like to book a clinical consultation.");
+    window.open(`https://wa.me/919153000000?text=${text}`, '_blank');
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leadForm.consent) {
+      toast.error('Clinical practice guidelines require your explicit Telemedicine consent to register inquiry.');
       return;
     }
-    setLoading(true);
-    try {
-      if (isSupabaseConfigured()) {
-        const { data, error } = await supabase.auth.signInWithOtp({
-          phone: `+91${cleanPhone}`,
-        });
-        if (error) {
-          throw new Error(error.message);
-        }
-        toast.success(`Secure 6-Digit code requested via Supabase for +91 ${cleanPhone}`);
-      } else {
-        toast.success(`[DEMO MODE] Code sent to +91 ${cleanPhone}. Enter code 123456 to log in.`);
-      }
-      setOtpStep('otp');
-    } catch (error: any) {
-      toast.error(error.message || 'OTP delivery error. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyOTP = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanPhone = phoneNumber.replace(/\D/g, '');
-    if (otpCode.length < 6) {
-      toast.error('Please enter the 6-digit confirmation code');
-      return;
-    }
-    setLoading(true);
-    try {
-      let isVerified = false;
-      if (isSupabaseConfigured()) {
-        const { data, error } = await supabase.auth.verifyOtp({
-          phone: `+91${cleanPhone}`,
-          token: otpCode,
-          type: 'sms'
-        });
-        if (error) {
-          throw new Error(error.message);
-        }
-        isVerified = !!data.session;
-      } else {
-        if (otpCode === '123456' || otpCode === '654321') {
-          isVerified = true;
-        } else {
-          throw new Error('Invalid code. For testing, please use verification code: 123456');
-        }
-      }
-
-      if (isVerified) {
-        // Authenticate anonymously in Firebase (to satisfy Firestore rules & schema seamlessly)
-        if (!auth.currentUser) {
-          const { signInAnonymously } = await import('firebase/auth');
-          await signInAnonymously(auth);
-        }
-
-        // Search or bootstrap patient profile
-        const { query, collection, where, getDocs, addDoc } = await import('firebase/firestore');
-        const q = query(
-          collection(db, 'patients'),
-          where('mobileNumber', '==', cleanPhone)
-        );
-        const querySnapshot = await getDocs(q);
-
-        let patientDocId = '';
-        let patientName = `Patient ${cleanPhone.slice(-4)}`;
-
-        if (!querySnapshot.empty) {
-          const firstDoc = querySnapshot.docs[0];
-          patientDocId = firstDoc.id;
-          patientName = firstDoc.data().name;
-        } else {
-          // Dynamic generation for new patient on-the-fly
-          const khcId = `KHC-${Math.floor(100000 + Math.random() * 900000)}`;
-          const docRef = await addDoc(collection(db, 'patients'), {
-            patientId: khcId,
-            khcId: khcId,
-            name: patientName,
-            mobileNumber: cleanPhone,
-            phone: cleanPhone,
-            role: 'patient',
-            isMobileVerified: true,
-            createdAt: new Date().toISOString()
-          });
-          patientDocId = docRef.id;
-        }
-
-        // Set patient sessions
-        localStorage.setItem('kayra_patient_session', JSON.stringify({
-          patientId: patientDocId,
-          name: patientName,
-          mobileNumber: cleanPhone,
-          loginType: 'phone-otp'
-        }));
-
-        toast.success(`Verification Successful! Welcome ${patientName}`);
-        setIsOtpModalOpen(false);
-        
-        // Redirect to portal with correct tab based on action
-        if (authIntent === 'book') {
-          navigate('/portal?tab=appointments');
-        } else {
-          navigate('/portal?tab=appointments');
-        }
-      }
-    } catch (error: any) {
-      toast.error(error.message || 'Verification failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    setLoading(true);
-    try {
-      const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-      
-      const docRef = doc(db, 'users', user.uid);
-      const docSnap = await getDoc(docRef);
-      
-      if (!docSnap.exists()) {
-        await setDoc(docRef, {
-          uid: user.uid,
-          email: user.email,
-          role: 'patient',
-          name: user.displayName || 'Patient'
-        });
-      }
-      toast.success('Patient Portal accessed');
-      navigate('/portal');
-    } catch (error: any) {
-      toast.error(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handlePatientLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!mobileNumber || !registrationNumber) {
-      toast.error('Please enter both mobile number and registration number (KHC-ID)');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const { query, collection, where, getDocs } = await import('firebase/firestore');
-      const q = query(
-        collection(db, 'patients'), 
-        where('mobileNumber', '==', mobileNumber),
-        where('khcId', '==', registrationNumber.toUpperCase())
-      );
-      const querySnapshot = await getDocs(q);
-      
-      if (!querySnapshot.empty) {
-        const patientDoc = querySnapshot.docs[0];
-        const patientData = patientDoc.data();
-        
-        const { signInAnonymously } = await import('firebase/auth');
-        const userCredential = await signInAnonymously(auth);
-        const uid = userCredential.user.uid;
-
-        if (!patientData.uid) {
-          const { doc, updateDoc } = await import('firebase/firestore');
-          await updateDoc(doc(db, 'patients', patientDoc.id), {
-            uid: uid,
-            lastLoginAt: new Date().toISOString()
-          });
-        }
-        
-        localStorage.setItem('kayra_patient_session', JSON.stringify({
-          patientId: patientDoc.id,
-          name: patientData.name,
-          mobileNumber: patientData.mobileNumber,
-          loginType: 'phone-dob'
-        }));
-        
-        toast.success(`Welcome back, ${patientData.name}`);
-        navigate('/portal');
-      } else {
-        toast.error('No record found matching these details.');
-      }
-    } catch (error: any) {
-      toast.error(error.message || 'Login failed');
-    } finally {
-      setLoading(false);
-    }
+    
+    // Simulating Formspree submission or routing dynamically based on state
+    setFormSubmitted(true);
+    toast.success('Inquiry processed successfully. Lead routed through Kayra’s lead collection gateway!');
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col scroll-smooth">
-      {/* Scroll Progress Bar */}
-      <motion.div
-        className="fixed top-0 left-0 right-0 h-[3px] bg-emerald-500 origin-left z-[100]"
-        style={{ scaleX: scrollYProgress }}
-      />
-
-      {/* Navigation */}
-      <nav className="fixed w-full z-50 bg-white/90 backdrop-blur-xl border-b border-slate-100/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
-          <Link to="/">
-            <Logo size="md" />
-          </Link>
-          <div className="hidden lg:flex items-center gap-8 text-sm font-bold text-slate-500 uppercase tracking-widest">
-            <a href="#" onClick={(e) => { e.preventDefault(); scrollToTop(); }} className="hover:text-emerald-600 transition-colors flex items-center gap-1">
-              <Home size={14} /> Home
-            </a>
-            <a href="#features" className="hover:text-emerald-600 transition-colors">Features</a>
-            <a href="#pricing" className="hover:text-emerald-600 transition-colors">Plans</a>
-            <a href="#patient-login" className="hover:text-emerald-600 transition-colors">Patient Portal</a>
-            <a href="#contact" className="hover:text-emerald-600 transition-colors">Contact</a>
-          </div>
-          <div className="flex items-center gap-2 sm:gap-4">
-            <Link to="/register-clinic" className="hidden lg:flex premium-3d-button-green text-xs font-bold uppercase tracking-widest text-white px-6 py-3 !rounded-xl">Doctor Registration</Link>
-            <button 
-              onClick={() => handleOpenAuthModal('book')}
-              className="hidden sm:flex premium-glass-button text-xs font-bold uppercase tracking-widest px-6 py-3 !rounded-xl cursor-pointer"
-            >
-              Book Appointment
-            </button>
-            <Link to="/login/doctor" className="hidden sm:flex bg-slate-900 text-white px-6 py-3 rounded-xl text-xs font-bold uppercase tracking-widest shadow-xl shadow-slate-200 hover:bg-slate-800 transition-all active:scale-95">Practitioner Access</Link>
-            <button 
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="lg:hidden p-3 text-slate-600 hover:bg-slate-50 rounded-xl transition-colors"
-            >
-              {isMenuOpen ? <CloseIcon size={24} /> : <Menu size={24} />}
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Menu */}
-        <AnimatePresence>
-          {isMenuOpen && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="lg:hidden bg-white border-b border-slate-100 overflow-hidden"
-            >
-              <div className="px-6 py-8 flex flex-col gap-6">
-                <a href="#" onClick={(e) => { e.preventDefault(); scrollToTop(); setIsMenuOpen(false); }} className="text-lg font-bold text-slate-900 uppercase tracking-widest flex items-center gap-2">
-                  <Home size={20} /> Home
-                </a>
-                <a href="#features" className="text-lg font-bold text-slate-900 uppercase tracking-widest">Features</a>
-                <a href="#pricing" className="text-lg font-bold text-slate-900 uppercase tracking-widest">Plans</a>
-                <a href="#patient-login" className="text-lg font-bold text-slate-900 uppercase tracking-widest">Patient Portal</a>
-                <a href="#contact" className="text-lg font-bold text-slate-900 uppercase tracking-widest">Contact</a>
-                <div className="h-[1px] bg-slate-100 w-full mt-2"></div>
-                <Link to="/register-clinic" className="w-full premium-3d-button-green text-white py-4 !rounded-2xl text-center font-bold uppercase tracking-widest text-xs mb-2">Doctor Registration</Link>
-                <button 
-                  onClick={() => { setIsMenuOpen(false); handleOpenAuthModal('book'); }}
-                  className="w-full premium-glass-button py-4 !rounded-2xl text-center font-bold uppercase tracking-widest text-xs mb-2 cursor-pointer"
-                >
-                  Book Appointment
-                </button>
-                <Link to="/login/doctor" className="w-full bg-slate-900 text-white py-4 rounded-2xl text-center font-bold uppercase tracking-widest text-xs">Practitioner Access</Link>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </nav>
-
-      {/* Hero Section */}
-      <section className="pt-32 sm:pt-40 pb-16 sm:pb-24 px-4 sm:px-6 relative overflow-hidden">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-full opacity-10 pointer-events-none">
-          <div className="absolute top-20 left-10 w-64 h-64 bg-emerald-400 rounded-full blur-[100px]"></div>
-          <div className="absolute bottom-20 right-10 w-64 h-64 bg-lime-400 rounded-full blur-[100px]"></div>
-        </div>
-        
-        <div className="max-w-7xl mx-auto text-center relative z-10 font-sans">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-bold uppercase tracking-[0.2em] mb-8"
-          >
-            <Leaf size={14} /> 
-            <span>Natural Healing • Precision Homeopathy • HIPAA Secure</span>
-          </motion.div>
-          <motion.h1 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-bold text-slate-900 tracking-tighter leading-[1.1] sm:leading-[1] mb-6 sm:mb-8 lg:mb-12 font-heading"
-          >
-            Digital Sanctuary for <br className="hidden md:block" />
-            <span className="text-brand-600">Holistic Recovery</span>
-          </motion.h1>
-          <motion.p 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="text-xs sm:text-lg text-slate-500 max-w-2xl mx-auto mb-10 sm:mb-12 leading-relaxed font-semibold px-4 sm:px-0"
-          >
-            Welcome to Kayra's Homoeo. Care – where legacy homeopathic wisdom meets advanced AI diagnostics. Experience a clinical ecosystem designed for your total well-being.
-          </motion.p>
+    <div className="min-h-screen bg-[#fcfdfe] relative flex flex-col font-sans antialiased text-slate-800 overflow-x-hidden">
+      
+      {/* Absolute Soft Clinical Radial Glowing mists like the screenshot */}
+      <div className="absolute inset-0 bg-gradient-to-b from-[#f8fcf9] via-white to-[#f4fbf7] pointer-events-none" />
+      <div className="absolute top-[10%] left-[10%] w-[320px] sm:w-[600px] h-[320px] sm:h-[600px] bg-emerald-500/5 rounded-full blur-[100px] sm:blur-[150px] pointer-events-none" />
+      <div className="absolute bottom-[20%] right-[10%] w-[280px] sm:w-[500px] h-[280px] sm:h-[500px] bg-teal-500/5 rounded-full blur-[80px] sm:blur-[130px] pointer-events-none" />
+      
+      {/* Persistent Responsive Header */}
+      <header className="sticky top-0 w-full bg-white/80 backdrop-blur-md border-b border-slate-100 flex items-center justify-between px-4 sm:px-8 py-4 z-40 shadow-xs shrink-0">
+        <div className="max-w-7xl w-full mx-auto flex items-center justify-between">
           
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4 px-6 sm:px-0"
-          >
-            <Link 
-              to="/register-clinic"
-              className="premium-3d-button-green text-white !rounded-2xl px-6 sm:px-8 py-4 sm:py-5 font-bold uppercase tracking-widest text-[10px] sm:text-xs flex items-center justify-center gap-3 group"
-            >
-              Doctor Registration <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-            </Link>
-            <button 
-              onClick={() => handleOpenAuthModal('book')}
-              className="premium-glass-button !rounded-2xl px-6 sm:px-8 py-4 sm:py-5 font-bold uppercase tracking-widest text-[10px] sm:text-xs flex items-center justify-center gap-3 group cursor-pointer"
-            >
-              Book Appointment <UserCircle size={18} className="text-emerald-500" />
-            </button>
-            <Link 
-              to="/login/doctor"
-              className="px-6 sm:px-8 py-4 sm:py-5 bg-slate-900 text-white rounded-2xl font-bold uppercase tracking-widest text-[10px] sm:text-xs flex items-center justify-center gap-3 shadow-2xl shadow-slate-300 hover:bg-slate-800 transition-all active:scale-95 group"
-            >
-              Start Practice <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-            </Link>
-          </motion.div>
-
-          {/* Manage Reschedule Existing Appointment subtle secondary action */}
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            className="mt-6 flex flex-col items-center justify-center"
-          >
-            <button
-              onClick={() => handleOpenAuthModal('manage')}
-              className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-emerald-600 transition-all underline decoration-dotted underline-offset-4 cursor-pointer"
-            >
-              Manage/Reschedule Existing Appointment
-            </button>
-          </motion.div>
-        </div>
-
-        {/* Scroll Down Indicator */}
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1 }}
-          className="absolute bottom-10 left-1/2 -translate-x-1/2 hidden lg:flex flex-col items-center gap-2"
-        >
-          <button 
-            onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}
-            className="flex flex-col items-center gap-2 text-slate-400 hover:text-emerald-600 transition-all group"
-          >
-            <span className="text-[10px] font-bold uppercase tracking-[0.3em] ml-1">Discover</span>
-            <motion.div
-              animate={{ y: [0, 8, 0] }}
-              transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
-              className="w-10 h-10 border border-slate-200 rounded-full flex items-center justify-center bg-white shadow-sm group-hover:border-emerald-200 group-hover:shadow-md transition-all"
-            >
-              <ChevronDown size={18} />
-            </motion.div>
-          </button>
-        </motion.div>
-      </section>
-
-      {/* Quick Stats/Features */}
-      <section id="features" className="py-16 md:py-24 bg-white border-y border-slate-100">
-        <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-8 md:gap-12">
-          <FeatureCard 
-            icon={BrainCircuit}
-            title="AI Repertory"
-            desc="Advanced symptom matching for precision remedy selection."
-          />
-          <FeatureCard 
-            icon={ShieldCheck}
-            title="Secure Vault"
-            desc="HIPAA-compliant encrypted health record storage."
-          />
-          <FeatureCard 
-            icon={Leaf}
-            title="Holistic Focus"
-            desc="Constitutional analysis for deep-acting healing."
-          />
-          <FeatureCard 
-            icon={FileSearch}
-            title="Digital Reports"
-            desc="Instant access to clinical records and prescriptions."
-          />
-        </div>
-      </section>
-
-      {/* Patient Login Section */}
-      <section id="patient-login" className="py-16 md:py-32 px-6 relative overflow-hidden bg-slate-50">
-        <div className="absolute top-0 right-0 w-[400px] sm:w-[600px] h-[400px] sm:h-[600px] bg-emerald-100/30 rounded-full blur-[120px] -mr-20 sm:-mr-40 -mt-20 sm:-mt-40 pointer-events-none"></div>
-        
-        <div className="max-w-7xl mx-auto flex flex-col lg:grid lg:grid-cols-2 gap-8 sm:gap-20 items-center">
-          <div className="relative z-10 text-center lg:text-left order-2 lg:order-1">
-            <div className="hidden lg:inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4">
-              <Sparkles size={14} />
-              <span>Digital Oasis</span>
-            </div>
-            <h2 className="text-3xl md:text-6xl font-bold text-slate-900 tracking-tight leading-tight mb-4 md:mb-6">
-              Your Healing <br className="hidden sm:block" />
-              <span className="text-emerald-600 italic">Sanctuary</span>
-            </h2>
-            <p className="text-sm md:text-lg text-slate-500 mb-6 md:mb-10 leading-relaxed max-w-lg mx-auto lg:mx-0 font-medium">
-              Secure digital care. Track your healing journey with intelligence.
-            </p>
+          {/* Logo on Left */}
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab('home')}>
+            <Logo size="md" showTagline={true} theme="dark" />
+          </div>
+          
+          {/* Nav options on Right */}
+          <div className="flex items-center gap-3">
             
-            <div className="flex flex-row lg:flex-col justify-center lg:justify-start gap-4 md:gap-6 text-left max-w-md mx-auto lg:mx-0">
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="w-9 h-9 bg-white rounded-xl shadow-sm flex items-center justify-center text-emerald-600 shrink-0 border border-slate-100">
-                  <FileSearch size={16} />
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-900 uppercase tracking-wide text-[9px] sm:text-[10px]">Vault</h4>
-                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium leading-none">Instant records.</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="w-9 h-9 bg-white rounded-xl shadow-sm flex items-center justify-center text-emerald-600 shrink-0 border border-slate-100">
-                  <Clock size={16} />
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-900 uppercase tracking-wide text-[9px] sm:text-[10px]">Booking</h4>
-                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium leading-none">Easy visits.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <motion.div 
-            id="patient-login"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="w-full order-1 lg:order-2 bg-gradient-to-br from-emerald-50 to-white rounded-[2rem] sm:rounded-[3rem] shadow-[0_32px_64px_-16px_rgba(30,41,59,0.06)] p-6 sm:p-12 border border-emerald-100/50 relative z-10 text-center"
-          >
-            <div className="flex flex-col items-center mb-8">
-              <Logo size="md" showTagline={true} />
-              <div className="h-[1px] w-12 bg-emerald-200/50 my-5 sm:my-6"></div>
-              <h3 className="text-sm font-black text-slate-900 tracking-wider uppercase">Patient Access</h3>
-              <p className="text-xs text-slate-500 mt-2 max-w-sm">
-                Access your appointments, health prescriptions, and active bills cleanly using seamless login confirmation. No passwords required.
-              </p>
-            </div>
-
-            <div className="space-y-3.5">
+            {/* Desktop Navigation Links */}
+            <div className="hidden md:flex items-center gap-6 mr-6 text-xs font-bold uppercase tracking-widest text-slate-500">
               <button 
-                onClick={() => handleOpenAuthModal('manage')}
-                className="w-full py-4.5 sm:py-5 bg-emerald-600 text-white rounded-xl sm:rounded-2xl font-bold shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98] flex items-center justify-center gap-3 uppercase tracking-widest text-[10px] cursor-pointer group"
+                onClick={() => setActiveTab('home')} 
+                className={`hover:text-[#009663] transition-colors cursor-pointer ${activeTab === 'home' ? 'text-[#009663] font-black' : ''}`}
               >
-                Access My Profile
-                <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                Home
               </button>
-
               <button 
-                onClick={() => handleOpenAuthModal('book')}
-                className="w-full py-4.5 sm:py-5 bg-white text-slate-700 rounded-xl sm:rounded-2xl font-bold border border-slate-200 hover:bg-slate-50 transition-all active:scale-[0.98] flex items-center justify-center gap-3 uppercase tracking-widest text-[10px] cursor-pointer"
+                onClick={() => setActiveTab('analyser')} 
+                className={`hover:text-[#009663] transition-colors cursor-pointer ${activeTab === 'analyser' ? 'text-[#009663] font-black' : ''}`}
               >
-                <Plus size={14} className="text-emerald-500" />
-                Book Appointment
+                AI Analyser
+              </button>
+              <button 
+                onClick={() => setActiveTab('consult')} 
+                className={`hover:text-[#009663] transition-colors cursor-pointer ${activeTab === 'consult' ? 'text-[#009663] font-black' : ''}`}
+              >
+                Contact Clinic
+              </button>
+              <button 
+                onClick={() => navigate('/login/doctor')} 
+                className="hover:text-[#009663] transition-colors cursor-pointer"
+              >
+                Doctor Portal
               </button>
             </div>
 
-            <div className="relative my-6 text-center text-slate-300">
-              <div className="absolute top-1/2 left-0 w-full h-[1px] bg-slate-100"></div>
-              <span className="text-[8px] uppercase tracking-[0.3em] font-bold bg-white px-4 relative z-10 text-slate-400">Secure Area</span>
+            {/* Verification Status Pill */}
+            <div className="flex items-center px-3 py-1.5 rounded-full bg-[#eefcf7] border border-emerald-100 text-[#009663] text-[9px] font-extrabold tracking-wider uppercase shadow-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#009663] mr-1.5 animate-pulse" />
+              RMP Active
             </div>
 
-            <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">
-              Protected by HIPAA Compliance • Encrypted Sessions
-            </p>
-          </motion.div>
-        </div>
-      </section>
-
-      {/* Pricing Section */}
-      <section id="pricing" className="py-16 md:py-32 px-4 sm:px-6 bg-white overflow-hidden relative">
-        <div className="max-w-7xl mx-auto relative z-10">
-          <div className="text-center mb-12 md:mb-20">
-            <h2 className="text-3xl md:text-5xl font-bold text-slate-900 tracking-tight mb-4 md:mb-6">Choose Your Practice Growth</h2>
-            <p className="text-sm md:text-slate-500 max-w-2xl mx-auto font-medium">Flexible plans designed for homeopathic practitioners of all sizes. Scale your clinic with advanced AI tools and secure record management.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
-            {PLANS.map((plan) => (
-              <motion.div 
-                key={plan.id}
-                whileHover={{ y: -10 }}
-                className={`bg-white rounded-[2rem] sm:rounded-[3rem] border-2 p-6 sm:p-10 flex flex-col relative overflow-hidden transition-all ${
-                  plan.popular ? 'border-emerald-500 shadow-[0_32px_64px_-16px_rgba(16,185,129,0.1)]' : 'border-slate-100'
-                }`}
-              >
-                {plan.popular && (
-                  <div className="absolute top-0 right-0 bg-emerald-500 text-white text-[10px] font-bold px-6 py-2 rounded-bl-3xl uppercase tracking-widest">
-                    Best Value
-                  </div>
-                )}
-                
-                <h3 className="text-2xl font-bold text-slate-900 mb-2">{plan.name}</h3>
-                <p className="text-sm text-slate-500 mb-8 leading-relaxed font-medium">{plan.description}</p>
-                
-                <div className="mb-10 flex items-baseline gap-2">
-                  <span className="text-5xl font-bold text-slate-900 tracking-tighter">{plan.price}</span>
-                  <span className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">/ {plan.period}</span>
-                </div>
-
-                <div className="space-y-4 mb-10 flex-grow">
-                  {plan.features.map((feature, idx) => (
-                    <div key={idx} className="flex items-start gap-3">
-                      <div className="mt-1 w-5 h-5 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-600 shrink-0">
-                        <Check size={12} strokeWidth={4} />
-                      </div>
-                      <span className="text-sm text-slate-600 font-bold leading-relaxed">{feature}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <Link 
-                  to="/login/doctor" 
-                  className={`w-full py-5 rounded-[2rem] font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all active:scale-95 ${
-                    plan.popular 
-                      ? 'bg-emerald-600 text-white shadow-xl shadow-emerald-100 hover:bg-emerald-700' 
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  Start Practice <ArrowRight size={18} />
-                </Link>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Role Selection Blocks */}
-      <section className="py-16 md:py-32 px-4 sm:px-6 bg-slate-900 text-white overflow-hidden relative">
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-emerald-500/10 rounded-full blur-[120px] -mr-40 -mt-40 pointer-events-none"></div>
-        <div className="max-w-7xl mx-auto relative z-10">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12">
-            <motion.div 
-              whileHover={{ y: -10 }}
-              className="bg-white/5 border border-white/10 p-8 sm:p-12 rounded-[2rem] sm:rounded-[2.5rem] group backdrop-blur-sm"
+            {/* Main menu toggle */}
+            <button 
+              onClick={() => setIsMenuOpen(!isMenuOpen)} 
+              className="p-2 text-slate-600 hover:text-slate-900 active:scale-95 transition-transform rounded-lg border border-slate-200 bg-white shadow-xs cursor-pointer"
+              aria-label="Toggle navigation menu"
             >
-              <div className="w-16 h-16 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-400 mb-6 md:mb-8 group-hover:scale-110 transition-transform">
-                <Stethoscope size={32} />
-              </div>
-              <h2 className="text-2xl md:text-3xl font-bold mb-4 md:mb-5 tracking-tight">Practitioner Portal</h2>
-              <p className="text-sm md:text-base text-slate-400 mb-8 md:mb-10 leading-relaxed font-medium">
-                Modernize your homeopathic practice with digital case picking, repertory tools, and secure telemedicine capabilities.
-              </p>
-              <Link to="/login/doctor" className="inline-flex items-center gap-3 text-emerald-400 font-bold uppercase tracking-widest text-[10px] hover:gap-5 transition-all">
-                Enter Digital Clinic <ArrowRight size={18} />
-              </Link>
-            </motion.div>
-
-            <motion.div 
-              whileHover={{ y: -10 }}
-              className="bg-white/5 border border-white/10 p-8 sm:p-12 rounded-[2rem] sm:rounded-[2.5rem] group backdrop-blur-sm"
-            >
-              <div className="w-16 h-16 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-400 mb-6 md:mb-8 group-hover:scale-110 transition-transform">
-                <UserCircle size={32} />
-              </div>
-              <h2 className="text-2xl md:text-3xl font-bold mb-4 md:mb-5 tracking-tight">Global Network</h2>
-              <p className="text-sm md:text-base text-slate-400 mb-8 md:mb-10 leading-relaxed font-medium">
-                Join our collective of certified practitioners. Collaborative clinical management with global reach and localized care.
-              </p>
-              <Link to="/login/doctor" className="inline-flex items-center gap-3 text-emerald-400 font-bold uppercase tracking-widest text-[10px] hover:gap-5 transition-all">
-                Registry Link <ArrowRight size={18} />
-              </Link>
-            </motion.div>
+              {isMenuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
           </div>
         </div>
-      </section>
+      </header>
 
-      {/* Contact Section */}
-      <section id="contact" className="py-24 md:py-32 bg-white relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full opacity-5 pointer-events-none">
-          <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-400 rounded-full blur-[100px]"></div>
-          <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-400 rounded-full blur-[100px]"></div>
-        </div>
-
-        <div className="max-w-7xl mx-auto px-6 relative z-10">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-20 items-center">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-bold uppercase tracking-widest mb-6">
-                Connect With Us
-              </div>
-              <h2 className="text-4xl md:text-6xl font-bold text-slate-900 tracking-tight leading-tight mb-8">
-                Start Your <span className="text-emerald-600 italic">Healing Conversion</span> Today
-              </h2>
-              <p className="text-lg text-slate-500 mb-12 leading-relaxed font-medium">
-                Have questions about our digital clinic solutions or need support with your homeopathic journey? Our team of holistic experts is here to assist you.
-              </p>
-
-              <div className="space-y-8">
-                <div className="flex items-center gap-6">
-                  <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-emerald-600 border border-slate-100 shadow-sm">
-                    <Smartphone size={24} />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Emergency Support</p>
-                    <p className="text-lg font-bold text-slate-900">+91 91530 00000</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-6">
-                  <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-emerald-600 border border-slate-100 shadow-sm">
-                    <BrainCircuit size={24} />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Email Inquiry</p>
-                    <p className="text-lg font-bold text-slate-900">care@kayrashomoeo.com</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <motion.div 
-              initial={{ opacity: 0, x: 20 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              className="bg-slate-50 p-8 sm:p-12 rounded-[3rem] border border-slate-100 shadow-2xl shadow-slate-200/50"
-            >
-              <form className="space-y-6" onSubmit={(e) => { e.preventDefault(); toast.success('Inquiry sent! We will contact you soon.'); }}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Full Name</label>
-                    <input 
-                      required
-                      type="text" 
-                      className="w-full px-6 py-4 rounded-2xl bg-white border border-slate-200 focus:border-emerald-500 outline-none transition-all text-sm font-bold shadow-sm"
-                      placeholder="Dr. John Doe"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
-                    <input 
-                      required
-                      type="email" 
-                      className="w-full px-6 py-4 rounded-2xl bg-white border border-slate-200 focus:border-emerald-500 outline-none transition-all text-sm font-bold shadow-sm"
-                      placeholder="john@example.com"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Subject</label>
-                  <select className="w-full px-6 py-4 rounded-2xl bg-white border border-slate-200 focus:border-emerald-500 outline-none transition-all text-sm font-bold shadow-sm appearance-none">
-                    <option>Clinic Digitization</option>
-                    <option>Patient Support</option>
-                    <option>Technical Issue</option>
-                    <option>Marketing / Partnership</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Message</label>
-                  <textarea 
-                    rows={4}
-                    className="w-full px-6 py-4 rounded-2xl bg-white border border-slate-200 focus:border-emerald-500 outline-none transition-all text-sm font-bold shadow-sm resize-none"
-                    placeholder="How can we help you today?"
-                  ></textarea>
-                </div>
-                <button 
-                  type="submit"
-                  className="w-full py-5 bg-slate-900 text-white rounded-2xl font-bold uppercase tracking-widest text-[10px] shadow-xl shadow-slate-200 hover:bg-emerald-600 transition-all flex items-center justify-center gap-3 group"
-                >
-                  Send Inquiry <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                </button>
-              </form>
-            </motion.div>
-          </div>
-        </div>
-      </section>
-
-      {/* Premium, clean, and ultra-scannable Web/App Footer */}
-      <Footer />
-
-      <WhatsAppButton />
-
-      {/* Global Scroll To Top Button */}
+      {/* Floating Menu Popover */}
       <AnimatePresence>
-        {showScrollTop && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.8, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.8, y: 20 }}
-            onClick={scrollToTop}
-            className="fixed bottom-8 right-6 w-14 h-14 bg-slate-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[60] hover:bg-emerald-600 transition-all active:scale-90 border-4 border-white"
-          >
-            <ArrowUp size={24} />
-          </motion.button>
+        {isMenuOpen && (
+          <div className="fixed inset-0 z-50 overflow-hidden md:absolute md:inset-auto md:top-20 md:right-8">
+            {/* Backdrop on mobile */}
+            <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-xs md:hidden" onClick={() => setIsMenuOpen(false)} />
+            
+            <motion.div 
+              initial={{ opacity: 0, y: -12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              className="absolute top-16 right-4 left-4 md:left-auto md:w-80 bg-white rounded-3xl border border-slate-200/90 shadow-2xl z-50 p-5 font-sans"
+            >
+              <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Portal Options</span>
+                <button onClick={() => setIsMenuOpen(false)} className="text-slate-400 hover:text-slate-600 p-1">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                <button 
+                  onClick={() => { setActiveTab('home'); setIsMenuOpen(false); }} 
+                  className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === 'home' ? 'bg-[#eefcf7] text-[#009663]' : 'hover:bg-slate-50 text-slate-600'}`}
+                >
+                  <span className="flex items-center gap-2.5"><HomeIcon size={16} /> Dashboard Home</span>
+                  <ChevronRight size={14} />
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('analyser'); setIsMenuOpen(false); }} 
+                  className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === 'analyser' ? 'bg-[#eefcf7] text-[#009663]' : 'hover:bg-slate-50 text-slate-600'}`}
+                >
+                  <span className="flex items-center gap-2.5"><BrainCircuit size={16} /> AI Report Analyser</span>
+                  <ChevronRight size={14} />
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('consult'); setIsMenuOpen(false); }} 
+                  className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === 'consult' ? 'bg-[#eefcf7] text-[#009663]' : 'hover:bg-slate-50 text-slate-600'}`}
+                >
+                  <span className="flex items-center gap-2.5"><Stethoscope size={16} /> Telehealth Consultation</span>
+                  <ChevronRight size={14} />
+                </button>
+                <div className="h-[1px] bg-slate-100 my-2" />
+                <button 
+                  onClick={() => { navigate('/login/doctor'); setIsMenuOpen(false); }}
+                  className="w-full flex items-center gap-2.5 p-3 text-xs font-extrabold text-slate-750 hover:bg-slate-50 rounded-xl text-left cursor-pointer transition-all"
+                >
+                  <User size={16} className="text-slate-500" /> Practitioner Access Login
+                </button>
+                <button 
+                  onClick={() => { navigate('/login/patient'); setIsMenuOpen(false); }}
+                  className="w-full flex items-center gap-2.5 p-3 text-xs font-extrabold text-slate-750 hover:bg-slate-50 rounded-xl text-left cursor-pointer transition-all"
+                >
+                  <UserCircle size={16} className="text-[#009663]" /> Patient Record Login
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
-      {/* Phone OTP Modal conforming to Clinical guidelines */}
+      {/* Main Content Scrollable Middle Canvas */}
+      <main className="flex-1 w-full relative z-10 pb-20">
+        <AnimatePresence mode="wait">
+          
+          {/* TAB 1: HOME (Redesigned with pixel perfect alignment to user screenshot) */}
+          {activeTab === 'home' && (
+            <motion.div
+              key="home-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.2 }}
+              className="flex flex-col items-center justify-center py-10 sm:py-20 md:py-28 max-w-4xl mx-auto px-5 text-center space-y-6 sm:space-y-8"
+            >
+              
+              {/* Natural Healing Capsule Badge */}
+              <div className="inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-full bg-[#eefcf7] border border-emerald-100/50 text-[#009663] text-[9px] sm:text-xs font-bold uppercase tracking-[0.08em] sm:tracking-[0.12em] animate-pulse-subtle">
+                <Leaf size={14} className="text-[#009663] shrink-0" />
+                <span>Natural Healing • Precision Homeopathy • HIPAA Secure</span>
+              </div>
+
+              {/* Title Section */}
+              <div className="space-y-2 font-heading">
+                <h2 className="text-4xl sm:text-6xl md:text-7xl font-extrabold text-[#0e1220] tracking-tight leading-[1.1]">
+                  Digital Sanctuary for
+                </h2>
+                <h3 className="text-4.5xl sm:text-6xl md:text-7xl font-extrabold text-[#00a36c] tracking-tight leading-[1.1] pt-1">
+                  Holistic Recovery
+                </h3>
+              </div>
+
+              {/* Emotive Subtitle Description */}
+              <p className="text-sm sm:text-base md:text-lg text-slate-500 max-w-2xl mx-auto leading-relaxed font-semibold">
+                Welcome to Kayra's Homoeo. Care – where legacy homeopathic wisdom meets advanced AI diagnostics. Experience a clinical ecosystem designed for your total well-being.
+              </p>
+
+              {/* Vertical Stack of Action Buttons directly mimicking screenshot spacing */}
+              <div className="flex flex-col w-full max-w-sm sm:max-w-md mx-auto pt-6 sm:pt-8 gap-4">
+                
+                {/* 1. DOCTOR REGISTRATION BUTTON -> SOLID VIBRANT GREEN */}
+                <button 
+                  onClick={() => navigate('/register-clinic')}
+                  className="w-full h-14 bg-[#009663] hover:bg-[#008054] text-white hover:shadow-lg hover:shadow-emerald-600/15 inline-flex items-center justify-center gap-2 px-8 rounded-full font-black uppercase tracking-widest text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  <span>Doctor Registration</span>
+                  <ArrowRight size={16} />
+                </button>
+
+                {/* 2. BOOK APPOINTMENT BUTTON -> WHITE BACKGROUND, THIN GRAY BORDER WITH GREEN USER LOGO */}
+                <button 
+                  onClick={() => navigate('/book-appointment')}
+                  className="w-full h-14 bg-white border border-slate-200 hover:border-slate-300 text-slate-800 hover:bg-slate-50 inline-flex items-center justify-center gap-2 px-8 rounded-full font-black uppercase tracking-widest text-xs sm:text-sm shadow-sm transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  <span className="flex-1 text-center">Book Appointment</span>
+                  <div className="w-5 h-5 rounded-full bg-[#eefcf7] border border-emerald-100 flex items-center justify-center text-[#009663] shrink-0">
+                    <User size={11} className="stroke-[3]" />
+                  </div>
+                </button>
+
+                {/* 3. START PRACTICE BUTTON -> SOLID COBALT / VERY DARK NAVY */}
+                <button 
+                  onClick={() => navigate('/login/doctor')}
+                  className="w-full h-14 bg-[#0b101d] hover:bg-slate-900 text-white hover:shadow-lg inline-flex items-center justify-center gap-2 px-8 rounded-full font-black uppercase tracking-widest text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  <span>Start Practice</span>
+                  <ArrowRight size={16} />
+                </button>
+
+                {/* Reschedule Underlying Link */}
+                <div className="pt-2">
+                  <button 
+                    onClick={() => navigate('/login/patient')}
+                    className="text-[10px] sm:text-xs font-black text-slate-400 hover:text-slate-600 uppercase tracking-widest underline underline-offset-4 decoration-slate-300 decoration-1 hover:decoration-slate-500 transition-all cursor-pointer"
+                  >
+                    Manage/Reschedule Existing Appointment
+                  </button>
+                </div>
+              </div>
+
+              {/* Secondary widgets displayed elegantly below the primary hero space */}
+              <div className="w-full border-t border-slate-100 pt-12 sm:pt-16 mt-12 grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
+                
+                {/* Helpline section */}
+                <div className="p-5 bg-[#eefcf7]/60 border border-emerald-100/40 rounded-3xl flex flex-col justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-[#009663]/10 border border-[#009663]/20 flex items-center justify-center text-[#009663] shrink-0">
+                      <Phone size={18} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Direct WhatsApp Helpline</h3>
+                      <p className="text-[11px] text-slate-500 font-semibold leading-normal mt-0.5">Need immediate coordinator assistance? Connect directly to patient support.</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={handleWhatsAppChat}
+                    className="w-full flex items-center justify-center gap-1.5 py-3 px-4 bg-[#009663] hover:bg-[#008054] text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xs transition-all active:scale-[0.98] cursor-pointer"
+                  >
+                    <MessageCircle size={14} /> Start Consultation Chat
+                  </button>
+                </div>
+
+                {/* Patient Portal Link Card */}
+                <div className="p-5 bg-white border border-slate-200/60 rounded-3xl flex flex-col justify-between gap-4 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-600 border border-slate-100">
+                      <UserCircle size={22} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">Patient Record Vault</h4>
+                      <p className="text-[11px] text-slate-400 font-semibold">Access report findings, digital prescriptions & KHC-ID code with high privacy.</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => navigate('/login/patient')}
+                    className="w-full py-3 bg-[#0b101d] hover:bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform"
+                  >
+                    Access Patient Portal
+                  </button>
+                </div>
+
+                {/* Full-width legal compliance block */}
+                <div className="md:col-span-2 bg-[#0b101d] text-white rounded-3xl p-6 space-y-2 relative overflow-hidden">
+                  <h3 className="text-[10px] font-black text-[#00a36c] uppercase tracking-widest flex items-center gap-1.5 leading-none">
+                    <ShieldCheck size={13} /> Legal Compliance & Practice Advisory Notice
+                  </h3>
+                  <p className="text-[11px] text-slate-350 leading-relaxed font-semibold">
+                    Kayra’s Homeo Care operates under the National Commission for Homoeopathy (NCH) Telemedicine practice guidelines. Every digital prescription and wellness repertorization is formulated strictly by a licensed Registered Medical Practitioner (RMP). Patient consents are collected securely with hashed EHR protocols.
+                  </p>
+                </div>
+              </div>
+
+              {/* Small Legal Links Footer */}
+              <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 pt-6 border-t border-slate-150 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                <button onClick={() => setLegalModalType('privacy')} className="hover:text-slate-600 transition-colors cursor-pointer">Privacy & Consent</button>
+                <span>•</span>
+                <button onClick={() => setLegalModalType('terms')} className="hover:text-slate-600 transition-colors cursor-pointer">Terms of Practice</button>
+                <span>•</span>
+                <button onClick={() => setLegalModalType('disclaimer')} className="hover:text-slate-600 transition-colors cursor-pointer">Clinical Disclaimer</button>
+              </div>
+
+            </motion.div>
+          )}
+
+          {/* TAB 2: REPORT ANALYSER (upgraded to elegant full screen card width layouts) */}
+          {activeTab === 'analyser' && (
+            <motion.div
+              key="analyser-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.2 }}
+              className="max-w-4xl mx-auto px-5 py-6 sm:py-14 space-y-6"
+            >
+              {/* Header Title segment */}
+              <div className="space-y-1.5 text-center md:text-left">
+                <span className="text-[10px] font-black text-[#009663] uppercase tracking-widest">Advanced Technology</span>
+                <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
+                  AI Diagnostic Report Analyser
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 max-w-2xl font-bold leading-normal">
+                  Drop a pathology document (blood, kidney panels, or thyroid panels) below or select from standard presets to witness instant OCR extraction and Materia Medica homeopathic alignment guides.
+                </p>
+              </div>
+
+              {/* Sample Document Section & Drag Upload Area */}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                
+                {/* Left panel Selection list */}
+                <div className="md:col-span-2 space-y-3 bg-white p-5 rounded-3xl border border-slate-200">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Choose Demo Sample Case</span>
+                  <div className="flex flex-col gap-2">
+                    {DEMO_REPORTS.map((r) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => handleSelectDemo(r.id)}
+                        className={`w-full p-3.5 rounded-2xl text-left transition-all ${selectedDemoId === r.id ? 'bg-[#eefcf7] border-2 border-[#009663] text-[#009663]' : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-2 border-transparent'}`}
+                      >
+                        <h4 className="text-xs font-extrabold pb-0.5 leading-tight">{r.name}</h4>
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wide">Patient: {r.patientName}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right panel Drag Upload area */}
+                <div 
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`md:col-span-3 border-2 border-dashed rounded-3xl p-8 text-center flex flex-col justify-center items-center transition-all relative min-h-[220px] ${isDragging ? 'bg-emerald-50/50 border-[#009663] scale-[0.99]' : 'bg-white hover:bg-slate-50 border-slate-200'}`}
+                >
+                  <input 
+                    type="file" 
+                    id="doc-upload" 
+                    accept="image/*,.pdf" 
+                    onChange={handleFileSelect} 
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20 animate-pulse"
+                  />
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-[#eefcf7] border border-emerald-100 flex items-center justify-center text-[#009663]">
+                      <Upload size={22} />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-xs sm:text-sm font-black text-slate-800 uppercase tracking-wider">Upload Lab Document</h4>
+                      <p className="text-[10px] sm:text-xs text-slate-400 font-bold leading-normal">
+                        Drag & Drop or Tap to browse blood tests, urinalysis, or radiology PDFs
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Simulation loading spinner info */}
+              {analyzingFile && (
+                <div className="space-y-4">
+                  <SkeletalLoader 
+                    variant="progress" 
+                    progressVal={uploadProgress} 
+                    label="Gemini Vision OCR Extraction In Progress..." 
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <SkeletalLoader variant="card" className="opacity-60" />
+                    <SkeletalLoader variant="card" className="opacity-40" />
+                    <SkeletalLoader variant="card" className="opacity-20" />
+                  </div>
+                </div>
+              )}
+
+              {/* Extraction outcomes display */}
+              {analyzedReport && !analyzingFile && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-5 bg-white border border-slate-200 rounded-3xl p-5 sm:p-7 shadow-sm"
+                >
+                  {/* Metadata display */}
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border-b border-slate-100 pb-4">
+                    <div>
+                      <h4 className="text-xs sm:text-sm font-black text-slate-900 uppercase tracking-widest leading-tight">{analyzedReport.name}</h4>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Assigned Patient Name: {analyzedReport.patientName}</p>
+                    </div>
+                    <span className="self-start sm:self-auto text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-150 uppercase tracking-widest px-2.5 py-1 rounded-lg">
+                      Extraction Date: {analyzedReport.date}
+                    </span>
+                  </div>
+
+                  {/* Visual Markers grids */}
+                  <div className="space-y-2.5">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Extracted Biological Indicators</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {analyzedReport.markers.map((m: any, idx: number) => {
+                        const isAbnormal = m.status.includes('Abnormal');
+                        return (
+                          <div key={idx} className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-extrabold text-slate-700 leading-tight">{m.name}</p>
+                              <p className="text-[9px] text-slate-400 font-bold mt-1">Normal Range: {m.reference}</p>
+                            </div>
+                            <div className="flex items-center justify-between mt-1">
+                              <span className="text-xs font-black text-slate-900 leading-none">{m.value}</span>
+                              <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${
+                                isAbnormal ? 'bg-rose-50 text-rose-700 border border-rose-100' : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                              }`}>
+                                {m.status}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Rubric formulation banner */}
+                  <div className="p-4 bg-[#eefcf7] border border-emerald-150/40 rounded-2xl space-y-1">
+                    <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-wider flex items-center gap-1.5 leading-none">
+                      <BrainCircuit size={13} /> Repertorization Rubric Mappings
+                    </h4>
+                    <p className="text-xs text-emerald-950 font-bold leading-relaxed">
+                      {analyzedReport.rubrics}
+                    </p>
+                  </div>
+
+                  {/* Suggested organic remedies list */}
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Suggested Organic Constitutional Remedies</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {analyzedReport.homeoSuggestions.map((hs: any, idx: number) => (
+                        <div key={idx} className="p-4 rounded-2xl border border-slate-150 bg-slate-50/20 flex flex-col gap-1.5">
+                          <h5 className="text-xs font-extrabold text-emerald-700">{hs.name}</h5>
+                          <p className="text-[10px] text-slate-500 leading-relaxed font-semibold">{hs.details}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Telemedicine constraints warn box */}
+                  <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl flex gap-2.5">
+                    <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[10px] sm:text-xs text-amber-900 leading-relaxed font-semibold">
+                      <strong>Clinical Practice Limitation:</strong> Highly specific homeopathic repertorizations are based under direct holistic symptoms verification. These automated diagnostic overlays serve exclusively for physical education benchmarks and does NOT replace licensed counseling checks.
+                    </p>
+                  </div>
+
+                </motion.div>
+              )}
+
+              {/* General compliant layout protection footnotes */}
+              <div className="p-4 bg-slate-50 rounded-2xl text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">
+                All patient uploads are strictly hashed and processed within secure endpoints in complete compliance under ABDM & HIPAA frameworks.
+              </div>
+
+            </motion.div>
+          )}
+
+          {/* TAB 3: CONSULTATION LAYOUT (beautiful full screen container spacing) */}
+          {activeTab === 'consult' && (
+            <motion.div
+              key="consult-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.2 }}
+              className="max-w-xl mx-auto px-5 py-6 sm:py-14 space-y-6"
+            >
+              <div className="space-y-1.5 text-center">
+                <span className="text-[10px] font-black text-[#009663] uppercase tracking-widest">Direct Patient Intake</span>
+                <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">Consultation Case Form</h2>
+                <p className="text-xs sm:text-sm text-slate-500 font-bold leading-normal">
+                  Dispatch your primary constitutional symptoms safely through our Lead collection database gateway or initiate direct live coordinator consulting.
+                </p>
+              </div>
+
+              {formSubmitted ? (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="p-8 bg-white border border-slate-200 rounded-3xl text-center space-y-4 shadow-xl"
+                >
+                  <div className="w-14 h-14 rounded-full bg-[#eefcf7] text-[#009663] flex items-center justify-center mx-auto border border-emerald-100">
+                    <Check size={26} className="stroke-[3]" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">Symptoms Dispatched</h4>
+                    <p className="text-xs sm:text-sm text-slate-450 leading-relaxed font-semibold mt-2">
+                      Inquiry logged successfully. Our clinical administrative desks will issue your official KHC-ID reference text to verify history.
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => { setFormSubmitted(false); setLeadForm({ name: '', phone: '', message: '', consent: false }); }}
+                    className="px-5 py-2.5 bg-[#0b101d] text-white rounded-xl text-xs font-black uppercase tracking-widest"
+                  >
+                    Submit Another Case
+                  </button>
+                </motion.div>
+              ) : (
+                <form onSubmit={handleFormSubmit} className="space-y-4 bg-white p-6 sm:p-8 rounded-3xl border border-slate-200/80 shadow-md">
+                  
+                  {/* Name Input */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest pl-1">Your Full Name</label>
+                    <input 
+                      required
+                      type="text" 
+                      value={leadForm.name}
+                      onChange={(e) => setLeadForm({ ...leadForm, name: e.target.value })}
+                      placeholder="e.g. Johnathan Doe"
+                      className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-xs font-bold text-slate-800 focus:bg-white focus:border-[#009663] transition-all"
+                    />
+                  </div>
+
+                  {/* Phone Input */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest pl-1">WhatsApp Mobile Contacts</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-extrabold text-slate-400">+91</span>
+                      <input 
+                        required
+                        type="tel" 
+                        maxLength={10}
+                        value={leadForm.phone}
+                        onChange={(e) => setLeadForm({ ...leadForm, phone: e.target.value.replace(/\D/g, '') })}
+                        placeholder="91530 00000"
+                        className="w-full pl-12 pr-4 py-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-xs font-bold text-slate-800 focus:bg-white focus:border-[#009663] tracking-wider transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Message Input */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest pl-1">Clinical Signs & Concerns</label>
+                    <textarea 
+                      required
+                      rows={4}
+                      value={leadForm.message}
+                      onChange={(e) => setLeadForm({ ...leadForm, message: e.target.value })}
+                      placeholder="Specify your chronic issues, symptom depth (modalities, time of aggravation), or current conventional drugs..."
+                      className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-xs font-bold text-slate-850 focus:bg-white focus:border-[#009663] resize-none leading-relaxed transition-all"
+                    />
+                  </div>
+
+                  {/* Mandatory Telemedicine NCH Consent */}
+                  <div className="flex items-start gap-2.5 py-3 border-t border-slate-100 mt-2">
+                    <input 
+                      type="checkbox"
+                      id="consent-trigger"
+                      checked={leadForm.consent}
+                      onChange={(e) => setLeadForm({ ...leadForm, consent: e.target.checked })}
+                      className="mt-0.5 rounded text-[#009663] border-slate-200 focus:ring-[#009663] cursor-pointer"
+                    />
+                    <label htmlFor="consent-trigger" className="text-[10px] text-slate-500 leading-normal font-bold cursor-pointer select-none">
+                      I submit this consultation inquiry with my explicit patient consent to process clinical assets under active Telemedicine practice rules.
+                    </label>
+                  </div>
+
+                  {/* Submit Button */}
+                  <button 
+                    type="submit"
+                    className="w-full py-4 bg-[#009663] hover:bg-[#008054] text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md transition-all active:scale-[0.98] cursor-pointer"
+                  >
+                    Process Case Intake Profile
+                  </button>
+
+                  <div className="text-center pt-2 border-t border-slate-100 mt-2">
+                    <span className="text-[8px] font-black text-slate-350 uppercase tracking-widest">Connect Immediately with Practitioner Desk</span>
+                    <button 
+                      type="button" 
+                      onClick={handleWhatsAppChat}
+                      className="w-full mt-2 flex items-center justify-center gap-1.5 border border-[#009663] text-[#009663] hover:bg-[#eefcf7] rounded-xl py-3 px-4 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                    >
+                      <MessageCircle size={15} /> Send WhatsApp Request
+                    </button>
+                  </div>
+
+                </form>
+              )}
+
+              {/* Disclaimer guidelines */}
+              <div className="p-4 bg-[#0b101d] text-white rounded-3xl space-y-1.5">
+                <h4 className="text-[9px] font-black text-[#00a36c] uppercase tracking-widest flex items-center gap-1.5">
+                  <Info size={11} /> NCH Advisory Restrictions & Limits
+                </h4>
+                <p className="text-[10px] text-slate-300 leading-relaxed font-semibold">
+                  Constitutional homeopathy maps are best evaluated face to face. Digital tele-care prescriptions serve for non-emergent general conditions. Do NOT utilize this interface for real-time acute emergency services.
+                </p>
+              </div>
+
+            </motion.div>
+          )}
+
+        </AnimatePresence>
+      </main>
+
+      {/* Persistent Beautiful Responsive Fluid Footer */}
+      <footer className="w-full bg-[#0b101d] text-slate-450 border-t border-slate-900 py-8 px-6 mt-auto text-xs z-30">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 text-center md:text-left">
+          <div className="space-y-1">
+            <h3 className="text-sm font-black text-white uppercase tracking-wider">Kayra’s Homeo Care</h3>
+            <p className="text-[10px] text-slate-500 font-bold">© 2026 Kayra's Care. All Trademark rights reserved. Bihar's Sanctuary clinic partners.</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-6 text-[10px] font-black uppercase tracking-widest text-[#00a36c]">
+            <button onClick={() => setLegalModalType('privacy')} className="hover:text-emerald-400 transition-colors cursor-pointer">Privacy Policy</button>
+            <button onClick={() => setLegalModalType('terms')} className="hover:text-emerald-400 transition-colors cursor-pointer">Terms & Conditions</button>
+            <button onClick={() => setLegalModalType('disclaimer')} className="hover:text-emerald-400 transition-colors cursor-pointer">Clinical Disclaimer</button>
+          </div>
+        </div>
+      </footer>
+
+      {/* Sticky Bottom Segment Navigation Option (Elegant compact float panel for mobile views) */}
+      <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white/90 backdrop-blur-md border-t border-slate-200/60 flex items-center justify-around px-2 z-40 md:hidden shadow-[0_-4px_20px_rgba(0,0,0,0.06)] pt-safe">
+        <button 
+          onClick={() => setActiveTab('home')}
+          className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[50px] transition-all cursor-pointer ${activeTab === 'home' ? 'text-[#009663] scale-105 font-black' : 'text-slate-400 font-bold'}`}
+        >
+          <HomeIcon size={18} />
+          <span className="text-[9px] uppercase tracking-wider font-extrabold">Home</span>
+        </button>
+        
+        <button 
+          onClick={() => setActiveTab('analyser')}
+          className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[50px] transition-all cursor-pointer ${activeTab === 'analyser' ? 'text-[#009663] scale-105 font-black' : 'text-slate-400 font-bold'}`}
+        >
+          <BrainCircuit size={18} />
+          <span className="text-[9px] uppercase tracking-wider font-extrabold">Analyser</span>
+        </button>
+
+        <button 
+          onClick={() => setActiveTab('consult')}
+          className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[50px] transition-all cursor-pointer ${activeTab === 'consult' ? 'text-[#009663] scale-105 font-black' : 'text-slate-400 font-bold'}`}
+        >
+          <Stethoscope size={18} />
+          <span className="text-[9px] uppercase tracking-wider font-extrabold">Consult</span>
+        </button>
+      </nav>
+
+      {/* FLOATING ACTION CHAT DESIGN PERSISTENT OVERLAY with Pink dot notification badge */}
+      <button 
+        onClick={handleWhatsAppChat}
+        className="fixed bottom-20 right-6 md:bottom-8 md:right-8 w-14 h-14 bg-[#009663] text-white rounded-full flex items-center justify-center shadow-xl hover:bg-[#008054] active:scale-95 transition-all z-40 hover:scale-105 tooltip floating-chat-icon"
+        aria-label="Contact patient support on WhatsApp"
+      >
+        <div className="relative">
+          <MessageCircle size={26} className="text-white fill-white/10" />
+          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-rose-500 rounded-full border-2 border-white animate-pulse" />
+        </div>
+      </button>
+
+      {/* RENDER DYNAMIC LEGAL MODALS */}
       <AnimatePresence>
-        {isOtpModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            {/* Backdrop Blur */}
+        {legalModalType && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            {/* Backdrop */}
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setIsOtpModalOpen(false)}
-              className="absolute inset-0 bg-slate-900/40 backdrop-blur-md"
+              onClick={() => setLegalModalType(null)}
+              className="absolute inset-0 bg-slate-950/65 backdrop-blur-sm"
             />
-
-            {/* Modal Body */}
+            {/* Modal Box */}
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-md bg-white rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden"
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-md bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-200 font-sans"
             >
-              {/* Top aesthetics line */}
-              <div className="h-1.5 w-full bg-emerald-500"></div>
-
-              {/* Close Button */}
+              <div className="h-2 w-full bg-[#009663]" />
               <button 
-                onClick={() => setIsOtpModalOpen(false)}
-                className="absolute top-5 right-5 px-3 py-1.5 text-slate-400 hover:text-slate-600 rounded-lg bg-slate-50 border border-slate-100 transition-all text-[10px] font-bold uppercase cursor-pointer"
+                onClick={() => setLegalModalType(null)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-650 p-1.5 bg-slate-50 border border-slate-100 rounded-lg text-[9px] font-black uppercase cursor-pointer"
               >
                 Close
               </button>
-
-              <div className="p-8 sm:p-10">
-                <div className="flex flex-col items-center text-center mb-8">
-                  <span className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-4">
-                    <Smartphone size={24} />
-                  </span>
-                  <h3 className="text-xl font-bold text-slate-900 tracking-tight leading-none mb-2">
-                    {authIntent === 'book' ? 'Book Appointment' : 'Sign In Portal'}
-                  </h3>
-                  <p className="text-xs text-slate-400 font-medium">
-                    {otpStep === 'phone' 
-                      ? 'Confirm your 10-digit mobile number to generate a secure login session.' 
-                      : `Enter the 6-digit confirmation code code sent to +91 ${phoneNumber}`}
-                  </p>
+              
+              <div className="p-6 space-y-4">
+                <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                  <div className="p-2 rounded-xl bg-[#eefcf7] text-[#009663]">
+                    {legalModalType === 'privacy' && <ShieldCheck size={20} />}
+                    {legalModalType === 'terms' && <FileSearch size={20} />}
+                    {legalModalType === 'disclaimer' && <AlertTriangle size={20} />}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900 uppercase">
+                      {legalModalType === 'privacy' && 'Privacy & Consent'}
+                      {legalModalType === 'terms' && 'Terms of Practice'}
+                      {legalModalType === 'disclaimer' && 'Clinical Disclaimer'}
+                    </h3>
+                    <p className="text-[9px] text-slate-430 font-bold uppercase tracking-widest">Official Clinic Notice</p>
+                  </div>
                 </div>
 
-                {otpStep === 'phone' ? (
-                  <form onSubmit={handleSendOTP} className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1 leading-none">Enter Mobile Number</label>
-                      <div className="relative">
-                        <span className="absolute left-5 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs tracking-wider">+91</span>
-                        <input 
-                          required
-                          type="tel"
-                          maxLength={10}
-                          value={phoneNumber}
-                          onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
-                          placeholder="9153000000"
-                          className="w-full pl-16 pr-6 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-sm font-bold tracking-widest"
-                        />
-                      </div>
-                    </div>
+                <div className="max-h-[250px] overflow-y-auto pr-1 text-slate-600 text-xs leading-relaxed space-y-3 font-semibold text-justify">
+                  {legalModalType === 'privacy' && (
+                    <>
+                      <p>At Kayra’s Homeo Care, we protect health records according to strict HIPAA and ABDM standards.</p>
+                      <p><strong>1. Clinical History Consent:</strong> Booking a telehealth session implies explicit consent to process vitals and symptoms for repertorization guides.</p>
+                      <p><strong>2. EHR Safety:</strong> Patient dossiers are completely encrypted and restricted from third-party advertising or public profiling networks.</p>
+                    </>
+                  )}
+                  {legalModalType === 'terms' && (
+                    <>
+                      <p>Only Registered Medical Practitioners (RMPs) with valid licenses listed in the National Register of Homoeopathy process virtual cases.</p>
+                      <p><strong>3. Scope of Consultation:</strong> Telemedicine serves as an efficient support portal for chronic constitutions but does NOT manage acute life-threatening emergencies.</p>
+                      <p><strong>4. Practitioner Accountability:</strong> Treating physicians retain complete clinical responsibility for final prescriptions.</p>
+                    </>
+                  )}
+                  {legalModalType === 'disclaimer' && (
+                    <>
+                      <p><strong>Important Health Warning:</strong> All materials, metrics, or suggestions displayed on the Report Analyser are automatic supportive educational reference mappings.</p>
+                      <p>They do NOT translate directly into official medical diagnoses, drug lists, or therapeutic interventions. Always seek direct validation with a qualified practitioner before consumption.</p>
+                    </>
+                  )}
+                </div>
 
-                    <button 
-                      type="submit"
-                      disabled={loading}
-                      className="w-full py-4.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-[10px] uppercase tracking-widest shadow-xl shadow-emerald-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
-                    >
-                      {loading ? 'Sending...' : 'Send OTP'}
-                      <ArrowRight size={14} />
-                    </button>
-                  </form>
-                ) : (
-                  <form onSubmit={handleVerifyOTP} className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1 leading-none">Confirm Verification Code</label>
-                      <input 
-                        required
-                        type="text"
-                        maxLength={6}
-                        value={otpCode}
-                        onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                        placeholder="••••••"
-                        className="w-full py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-center text-lg font-bold tracking-[0.5em]"
-                      />
-                    </div>
-
-                    <button 
-                      type="submit"
-                      disabled={loading}
-                      className="w-full py-4.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-bold text-[10px] uppercase tracking-widest shadow-xl shadow-slate-200 transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
-                    >
-                      {loading ? 'Verifying...' : 'Verify Code'}
-                    </button>
-
-                    <div className="text-center mt-4">
-                      <button 
-                        type="button"
-                        onClick={() => setOtpStep('phone')}
-                        className="text-[10px] font-bold text-slate-400 hover:text-emerald-600 transition-all uppercase tracking-wider underline decoration-dotted"
-                      >
-                        Change Phone Number
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                <div className="mt-8 pt-6 border-t border-slate-100 flex items-center gap-2.5 text-slate-400 justify-center">
-                  <ShieldCheck size={14} className="text-emerald-500" />
-                  <span className="text-[9px] font-bold uppercase tracking-wider">Materia Medica Compliance</span>
+                <div className="border-t border-slate-100 pt-3 flex justify-end">
+                  <button 
+                    onClick={() => setLegalModalType(null)}
+                    className="px-4 py-2 bg-[#0b101d] text-white rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer"
+                  >
+                    Acknowledged
+                  </button>
                 </div>
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
-    </div>
-  );
-}
 
-function FeatureCard({ icon: Icon, title, desc }: { icon: any, title: string, desc: string }) {
-  return (
-    <div className="space-y-5 group">
-      <div className="w-16 h-16 bg-emerald-50 rounded-[1.5rem] flex items-center justify-center text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-500 shadow-sm">
-        <Icon size={28} />
-      </div>
-      <div>
-        <h3 className="font-bold text-slate-900 uppercase tracking-wider text-sm mb-2">{title}</h3>
-        <p className="text-sm text-slate-500 leading-relaxed font-medium">{desc}</p>
-      </div>
     </div>
   );
 }

@@ -119,6 +119,14 @@
   .animate-pulse-subtle {
     animation: pulse-subtle 2s infinite ease-in-out;
   }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }
 
 .markdown-body {

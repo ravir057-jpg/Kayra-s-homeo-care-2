@@ -61,6 +61,7 @@ import { format } from 'date-fns';
 import { useLanguage } from '../../lib/i18n';
 import ReactMarkdown from 'react-markdown';
 import { analyzeMedicalReport } from '../../lib/gemini';
+import { triggerWebhookStatusUpdate } from '../../lib/webhook';
 import { logAction } from '../../lib/audit';
 import { generatePrescriptionPDF, generateInvoicePDF } from '../../lib/pdf';
 import { generateJitsiUrl } from '../../lib/video';
@@ -233,8 +234,15 @@ export default function PatientPortal() {
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("File size exceeds 10MB limit");
+    const allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'];
+    const fileExtension = file.name.split('.').pop()?.toLowerCase();
+    if (!fileExtension || !allowedExtensions.includes(fileExtension)) {
+      toast.error("Security Alert: Only safe file formats (.pdf, .jpg, .jpeg, .png) are permitted.");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Security Alert: Maximum file size is strictly limited to 5MB.");
       return;
     }
 
@@ -261,9 +269,13 @@ export default function PatientPortal() {
 
         const path = 'medical_reports';
         try {
-          await addDoc(collection(db, path), reportData);
-          toast.success("Report uploaded to vault successfully");
+          const docRef = await addDoc(collection(db, path), reportData);
+          toast.success("Report uploaded to vault successfully! Triggering Kayra AI Analyzer...");
           fetchData();
+          
+          // Trigger the AI analysis automatically with the persistent doc reference
+          const uploadedReportObj = { id: docRef.id, ...reportData };
+          handleAIAnalysis(uploadedReportObj);
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, path);
         }
@@ -299,6 +311,19 @@ export default function PatientPortal() {
             status: 'Analyzed',
             analyzedAt: new Date().toISOString()
           });
+
+          // Trigger automatic webhook status trigger
+          await triggerWebhookStatusUpdate(
+            'MEDICAL_REPORT_STATE',
+            'Analyzed',
+            report.id,
+            {
+              patientName: patientData?.name || 'Patient',
+              title: report.title || report.fileName || 'Report',
+              summary: analysis.substring(0, 300) + '...'
+            }
+          );
+          
           toast.success("AI Analysis complete and synced to clinic");
           if (selectedReportForView?.id === report.id) {
             setSelectedReportForView(prev => ({ ...prev, status: 'Analyzed', fullAnalysis: analysis }));
@@ -415,62 +440,66 @@ export default function PatientPortal() {
           }
         }
 
-        // REAL-TIME SYNC for Appointments
-        const apptQuery = patient.clinicId 
-          ? query(collection(db, 'appointments'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
-          : query(collection(db, 'appointments'), where('patientUid', '==', user.uid));
-        
-        onSnapshot(apptQuery, (snapshot) => {
-          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
-          setAppointments(data.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+        const targetPatientUid = patient.uid || user?.uid || '';
+
+        if (targetPatientUid) {
+          // REAL-TIME SYNC for Appointments
+          const apptQuery = patient.clinicId 
+            ? query(collection(db, 'appointments'), where('patientUid', '==', targetPatientUid), where('clinicId', '==', patient.clinicId))
+            : query(collection(db, 'appointments'), where('patientUid', '==', targetPatientUid));
           
-          // Generate real-time activity feed
-          const activityLog = data.slice(0, 5).map(a => ({
-            id: a.id || Math.random().toString(),
-            type: 'booking' as const,
-            title: `${a.type} Visit`,
-            time: a.createdAt || new Date().toISOString(),
-            status: a.status,
-            details: `Appointment with ${a.doctorName}`
-          }));
-          setActivity(activityLog);
-        });
+          onSnapshot(apptQuery, (snapshot) => {
+            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+            setAppointments(data.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+            
+            // Generate real-time activity feed
+            const activityLog = data.slice(0, 5).map(a => ({
+              id: a.id || Math.random().toString(),
+              type: 'booking' as const,
+              title: `${a.type} Visit`,
+              time: a.createdAt || new Date().toISOString(),
+              status: a.status,
+              details: `Appointment with ${a.doctorName}`
+            }));
+            setActivity(activityLog);
+          });
 
-        // REAL-TIME SYNC for Prescriptions
-        const rxQuery = patient.clinicId
-          ? query(collection(db, 'prescriptions'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
-          : query(collection(db, 'prescriptions'), where('patientUid', '==', user.uid));
-        
-        onSnapshot(rxQuery, (snapshot) => {
-          setPrescriptions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Prescription)));
-        });
+          // REAL-TIME SYNC for Prescriptions
+          const rxQuery = patient.clinicId
+            ? query(collection(db, 'prescriptions'), where('patientUid', '==', targetPatientUid), where('clinicId', '==', patient.clinicId))
+            : query(collection(db, 'prescriptions'), where('patientUid', '==', targetPatientUid));
+          
+          onSnapshot(rxQuery, (snapshot) => {
+            setPrescriptions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Prescription)));
+          });
 
-        // REAL-TIME SYNC for Invoices
-        const invQuery = patient.clinicId
-          ? query(collection(db, 'invoices'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
-          : query(collection(db, 'invoices'), where('patientUid', '==', user.uid));
-        
-        onSnapshot(invQuery, (snapshot) => {
-          setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
-        });
+          // REAL-TIME SYNC for Invoices
+          const invQuery = patient.clinicId
+            ? query(collection(db, 'invoices'), where('patientUid', '==', targetPatientUid), where('clinicId', '==', patient.clinicId))
+            : query(collection(db, 'invoices'), where('patientUid', '==', targetPatientUid));
+          
+          onSnapshot(invQuery, (snapshot) => {
+            setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
+          });
 
-        // REAL-TIME SYNC for Symptom Logs
-        const logsQuery = patient.clinicId
-          ? query(collection(db, 'symptom_logs'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
-          : query(collection(db, 'symptom_logs'), where('patientUid', '==', user.uid));
-        
-        onSnapshot(logsQuery, (snapshot) => {
-          setSymptomLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SymptomLog)).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-        });
+          // REAL-TIME SYNC for Symptom Logs
+          const logsQuery = patient.clinicId
+            ? query(collection(db, 'symptom_logs'), where('patientUid', '==', targetPatientUid), where('clinicId', '==', patient.clinicId))
+            : query(collection(db, 'symptom_logs'), where('patientUid', '==', targetPatientUid));
+          
+          onSnapshot(logsQuery, (snapshot) => {
+            setSymptomLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SymptomLog)).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+          });
 
-        // REAL-TIME SYNC for Reports
-        const reportsQuery = patient.clinicId
-          ? query(collection(db, 'medical_reports'), where('patientUid', '==', user.uid), where('clinicId', '==', patient.clinicId))
-          : query(collection(db, 'medical_reports'), where('patientUid', '==', user.uid));
-        
-        onSnapshot(reportsQuery, (snapshot) => {
-          setReports(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        });
+          // REAL-TIME SYNC for Reports
+          const reportsQuery = patient.clinicId
+            ? query(collection(db, 'medical_reports'), where('patientUid', '==', targetPatientUid), where('clinicId', '==', patient.clinicId))
+            : query(collection(db, 'medical_reports'), where('patientUid', '==', targetPatientUid));
+          
+          onSnapshot(reportsQuery, (snapshot) => {
+            setReports(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+          });
+        }
       }
 
       // REAL-TIME SYNC for Doctors
@@ -498,7 +527,10 @@ export default function PatientPortal() {
   };
 
   useEffect(() => {
-    fetchData();
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      fetchData();
+    });
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -1893,7 +1925,7 @@ export default function PatientPortal() {
                             <label className="cursor-pointer flex items-center justify-center gap-3 px-12 py-6 bg-white text-brand-600 hover:bg-brand-50 rounded-3xl font-black text-sm uppercase tracking-widest transition-all shadow-2xl active:scale-95">
                               <Upload size={24} />
                               <span>{isUploadingReport ? 'Uploading...' : 'Add to Vault'}</span>
-                              <input type="file" className="hidden" onChange={handleFileUpload} accept="image/*,application/pdf" disabled={isUploadingReport} />
+                              <input type="file" className="hidden" onChange={handleFileUpload} accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={isUploadingReport} />
                             </label>
                           </div>
                        </div>
@@ -2111,7 +2143,7 @@ export default function PatientPortal() {
                         <label className="cursor-pointer flex items-center justify-center gap-3 px-12 py-6 bg-white text-brand-600 rounded-3xl font-black text-sm uppercase tracking-widest hover:bg-brand-50 transition-all shadow-2xl active:scale-95">
                           <Upload size={24} />
                           <span>{isUploadingReport ? 'Uploading...' : 'Add to Vault'}</span>
-                          <input type="file" className="hidden" onChange={handleFileUpload} accept="image/*,application/pdf" disabled={isUploadingReport} />
+                          <input type="file" className="hidden" onChange={handleFileUpload} accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={isUploadingReport} />
                         </label>
                       </div>
                    </div>
@@ -3219,12 +3251,22 @@ export default function PatientPortal() {
         />
       )}
 
-      <ElderlyCareBar clinicInfo={clinicInfo} appointments={appointments} />
+      <ElderlyCareBar 
+        clinicInfo={clinicInfo} 
+        appointments={appointments} 
+        executeWithConsent={executeWithConsent}
+        setActiveCall={setActiveCall}
+      />
     </div>
   );
 }
 
-function ElderlyCareBar({ clinicInfo, appointments }: { clinicInfo: any, appointments: any[] }) {
+function ElderlyCareBar({ clinicInfo, appointments, executeWithConsent, setActiveCall }: { 
+  clinicInfo: any, 
+  appointments: any[], 
+  executeWithConsent: (actionLabel: string, onAccept: () => void) => void,
+  setActiveCall: (appt: Appointment | null) => void 
+}) {
   const nextAppt = appointments.find(a => a.status === 'Scheduled');
   
   return (
@@ -3257,6 +3299,17 @@ function ElderlyCareBar({ clinicInfo, appointments }: { clinicInfo: any, appoint
           </a>
           
           <button 
+            type="button"
+            onClick={() => {
+              const upcoming = appointments.find(a => a.status === 'Scheduled' && a.type === 'Online');
+              if (upcoming) {
+                executeWithConsent('Proceed to Consultation', () => {
+                  setActiveCall(upcoming);
+                });
+              } else {
+                toast.info("No scheduled digital visit found. Please book one first.");
+              }
+            }}
             className="flex-1 sm:flex-none px-6 sm:px-10 py-4 sm:py-5 bg-slate-900 text-white rounded-[1.8rem] text-xs sm:text-sm font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-black transition-all shadow-xl shadow-slate-900/20 active:scale-95 border-b-4 border-slate-950"
           >
             <Video size={20} className="text-brand-400" />

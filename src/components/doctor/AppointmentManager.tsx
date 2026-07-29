@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { db, auth, handleFirestoreError, OperationType } from '../../lib/db';
 import { logAction } from '../../lib/audit';
+import { triggerWebhookStatusUpdate } from '../../lib/webhook';
 import { collection, addDoc, getDocs, query, orderBy, doc, updateDoc, where, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { Appointment, Patient, UserProfile } from '../../types';
 import { format, parseISO } from 'date-fns';
-import { Calendar, Clock, Video, Home, Plus, X, CheckCircle2, PhoneOutgoing, Search, Pencil, ExternalLink, Copy, AlertTriangle } from 'lucide-react';
+import { Calendar, Clock, Video, Home, Plus, X, CheckCircle2, PhoneOutgoing, Search, Pencil, ExternalLink, Copy, AlertTriangle, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
@@ -23,6 +24,7 @@ export default function AppointmentManager({ profile }: { profile?: any }) {
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [cancellingAppt, setCancellingAppt] = useState<Appointment | null>(null);
   const [loading, setLoading] = useState(true);
+  const [viewCategory, setViewCategory] = useState<'today' | 'upcoming' | 'past' | 'all'>('today');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<string>('All');
   const [search, setSearch] = useState('');
@@ -32,15 +34,39 @@ export default function AppointmentManager({ profile }: { profile?: any }) {
   const [shouldGenerateInvoice, setShouldGenerateInvoice] = useState(true);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
 
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
   const filteredAppointments = appointments.filter(appt => {
+    // 1. Category filter
+    let categoryMatch = true;
+    if (viewCategory === 'today') {
+      categoryMatch = appt.date === todayStr;
+    } else if (viewCategory === 'upcoming') {
+      categoryMatch = appt.date > todayStr || (appt.date === todayStr && appt.status !== 'Completed' && appt.status !== 'Cancelled');
+    } else if (viewCategory === 'past') {
+      categoryMatch = appt.date < todayStr || appt.status === 'Completed' || appt.status === 'Cancelled';
+    }
+
+    // 2. Status & type filter
     const statusMatch = statusFilter === 'All' || appt.status === statusFilter;
     const typeMatch = typeFilter === 'All' || appt.type === typeFilter;
     const searchMatch = 
       appt.patientName.toLowerCase().includes(search.toLowerCase()) || 
       appt.reason?.toLowerCase().includes(search.toLowerCase()) ||
       appt.patientId.toLowerCase().includes(search.toLowerCase());
-    return statusMatch && typeMatch && searchMatch;
+
+    return categoryMatch && statusMatch && typeMatch && searchMatch;
   });
+
+  const getPatientWhatsAppLink = (appt: Appointment) => {
+    const patientObj = patients.find(p => p.id === appt.patientId);
+    const rawPhone = patientObj?.phone || patientObj?.mobileNumber || (appt as any).patientPhone || '';
+    const cleanPhone = rawPhone.replace(/\D/g, '');
+    if (!cleanPhone) return null;
+    const fullNum = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+    const text = `Namaste ${appt.patientName}, this is regarding your appointment with Kayra's Homeo Care on ${appt.date} at ${appt.time}.`;
+    return `https://wa.me/${fullNum}?text=${encodeURIComponent(text)}`;
+  };
 
   const [formData, setFormData] = useState<Partial<Appointment>>({
     patientId: location.state?.patientId || '',
@@ -58,9 +84,10 @@ export default function AppointmentManager({ profile }: { profile?: any }) {
     
     try {
       const apptsQ = query(
-        collection(db, 'appointments'), 
-        where('clinicId', '==', clinicId),
-        orderBy('date', 'asc')
+         collection(db, 'appointments'), 
+         where('clinicId', '==', clinicId),
+         where('doctorId', '==', auth.currentUser?.uid || ''),
+         orderBy('date', 'asc')
       );
       const apptsSnap = await getDocs(apptsQ);
       setAppointments(apptsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment)));
@@ -174,6 +201,21 @@ export default function AppointmentManager({ profile }: { profile?: any }) {
     const path = `appointments/${id}`;
     try {
       await updateDoc(doc(db, 'appointments', id), { status });
+
+      // Trigger automatic webhook status trigger
+      const currentAppt = appointments.find(a => a.id === id);
+      await triggerWebhookStatusUpdate(
+        'APPOINTMENT_STATE',
+        status,
+        id,
+        {
+          doctorName: currentAppt?.doctorName || 'Doctor',
+          patientName: currentAppt?.patientName || 'Patient',
+          date: currentAppt?.date,
+          time: currentAppt?.time,
+          fee: confirmedFee || currentAppt?.fee || 500
+        }
+      );
       
       // Auto-create invoice if completed
       if (status === 'Completed' && !skipInvoice) {
@@ -313,109 +355,150 @@ export default function AppointmentManager({ profile }: { profile?: any }) {
         </div>
       </div>
 
+      {/* Category Tabs: Today, Upcoming, Past, All */}
+      <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit overflow-x-auto no-scrollbar">
+        {[
+          { id: 'today', label: "Today's Appointments", count: appointments.filter(a => a.date === todayStr).length },
+          { id: 'upcoming', label: "Upcoming Bookings", count: appointments.filter(a => a.date > todayStr || (a.date === todayStr && a.status !== 'Completed' && a.status !== 'Cancelled')).length },
+          { id: 'past', label: "Past Visits", count: appointments.filter(a => a.date < todayStr || a.status === 'Completed' || a.status === 'Cancelled').length },
+          { id: 'all', label: "All Appointments", count: appointments.length }
+        ].map(cat => (
+          <button
+            key={cat.id}
+            type="button"
+            onClick={() => setViewCategory(cat.id as any)}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+              viewCategory === cat.id 
+                ? 'bg-white text-indigo-900 shadow-sm font-black' 
+                : 'text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            {cat.label}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold ${
+              viewCategory === cat.id ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200 text-slate-600'
+            }`}>
+              {cat.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1 overflow-hidden">
         <div className="xl:col-span-3 bg-white sm:bg-transparent rounded-xl border border-slate-200 sm:border-none shadow-sm sm:shadow-none overflow-y-auto custom-scrollbar touch-scroll">
           {/* Mobile View: Cards */}
           <div className="grid grid-cols-1 gap-4 sm:hidden p-4 pb-20">
             {filteredAppointments.length === 0 ? (
               <div className="bg-white p-8 rounded-2xl border border-dashed border-slate-200 text-center">
-                <p className="text-slate-400 text-sm font-medium">No appointments match the criteria.</p>
+                <p className="text-slate-400 text-sm font-medium">No appointments found for this filter.</p>
               </div>
             ) : (
-              filteredAppointments.map((appt) => (
-                <div key={appt.id} className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm space-y-4 active:scale-[0.98] transition-all">
-                  <div className="flex justify-between items-start">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-base shrink-0">
-                        {appt.patientName.substring(0, 2).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="font-bold text-slate-900 text-base leading-tight truncate">{appt.patientName}</h3>
-                        <div className="flex flex-wrap items-center gap-2 mt-1">
-                          <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full tracking-wider shrink-0 ${
-                            appt.status === 'Completed' ? 'bg-emerald-50 text-emerald-500' :
-                            appt.status === 'Cancelled' ? 'bg-red-50 text-red-500' : 
-                            appt.status === 'pending' ? 'bg-indigo-50 text-indigo-500 animate-pulse' : 'bg-orange-50 text-orange-500'
-                          }`}>
-                            {appt.status}
-                          </span>
-                          {appt.type === 'Online' ? (
-                            <div className="flex items-center gap-2 shrink-0">
+              filteredAppointments.map((appt) => {
+                const waLink = getPatientWhatsAppLink(appt);
+                return (
+                  <div key={appt.id} className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm space-y-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-base shrink-0">
+                          {appt.patientName.substring(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-slate-900 text-base leading-tight truncate">{appt.patientName}</h3>
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            {/* Status Toggle Dropdown */}
+                            <select
+                              value={appt.status}
+                              onChange={(e) => handleStatusUpdate(appt.id!, e.target.value as any)}
+                              className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full outline-none border cursor-pointer ${
+                                appt.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                appt.status === 'Cancelled' ? 'bg-red-50 text-red-700 border-red-200' :
+                                appt.status === 'pending' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-orange-50 text-orange-700 border-orange-200'
+                              }`}
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="Scheduled">Confirmed / Scheduled</option>
+                              <option value="Completed">Completed</option>
+                              <option value="Cancelled">Cancelled</option>
+                            </select>
+
+                            {appt.type === 'Online' ? (
                               <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
                                 <Video size={10} /> VIDEO
                               </span>
-                              {appt.videoLink && (
-                                <button 
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(appt.videoLink!);
-                                    toast.success('Link copied');
-                                  }}
-                                  className="tap-target text-slate-400 hover:text-indigo-600"
-                                  title="Copy Meeting Link"
-                                >
-                                  <Copy size={12} />
-                                </button>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full shrink-0">
-                              <Home size={10} /> CLINIC
-                            </span>
-                          )}
+                            ) : (
+                              <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                                <Home size={10} /> CLINIC
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-4 py-4 px-1 bg-slate-50 rounded-2xl">
-                    <div className="flex items-center gap-3 pl-3">
-                      <Calendar size={18} className="text-indigo-400 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-800 truncate">{format(new Date(appt.date), 'dd MMM')}</p>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase truncate">{format(new Date(appt.date), 'yyyy')}</p>
+                    <div className="grid grid-cols-2 gap-4 py-4 px-1 bg-slate-50 rounded-2xl">
+                      <div className="flex items-center gap-3 pl-3">
+                        <Calendar size={18} className="text-indigo-400 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-800 truncate">{format(new Date(appt.date), 'dd MMM')}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase truncate">{format(new Date(appt.date), 'yyyy')}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
+                        <Clock size={18} className="text-indigo-400 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-800 truncate">{appt.time}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase truncate">TIME SLOT</p>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
-                      <Clock size={18} className="text-indigo-400 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-800 truncate">{appt.time}</p>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase truncate">TIME SLOT</p>
-                      </div>
-                    </div>
-                  </div>
+
+                    {appt.reason && (
+                      <p className="text-xs text-slate-600 font-medium bg-slate-50 p-3 rounded-xl border border-slate-100 italic">
+                        "{appt.reason}"
+                      </p>
+                    )}
 
                     <div className="flex gap-2 pt-2 overflow-x-auto no-scrollbar pb-1">
+                      {/* WhatsApp Chat Quick Action */}
+                      {waLink && (
+                        <a
+                          href={waLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="h-[48px] px-3 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shrink-0"
+                          title="Chat on WhatsApp"
+                        >
+                          <MessageCircle size={16} /> WhatsApp
+                        </a>
+                      )}
+
                       <button 
                         onClick={() => handleEdit(appt)}
-                        className="flex-1 min-w-[100px] h-[48px] bg-slate-100 text-slate-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-slate-200 transition-all active:scale-95"
+                        className="flex-1 min-w-[90px] h-[48px] bg-slate-100 text-slate-600 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-slate-200 transition-all active:scale-95"
                       >
                         <Pencil size={16} /> {appt.status === 'pending' ? 'CONFIRM' : 'EDIT'}
                       </button>
-                      {appt.type === 'Online' && appt.status === 'Scheduled' && (
-                      <button 
-                        onClick={() => handleStartCall(appt)}
-                        className="flex-1 min-w-[120px] h-[48px] bg-indigo-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-95"
-                      >
-                        <PhoneOutgoing size={16} /> START CALL
-                      </button>
-                    )}
-                    {appt.status === 'Scheduled' && (
-                      <button 
-                        onClick={() => initiateCompletion(appt)}
-                        className="flex-1 min-w-[120px] h-[48px] bg-emerald-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-95"
-                      >
-                        <CheckCircle2 size={16} /> COMPLETE
-                      </button>
-                    )}
-                    <button 
-                      onClick={() => setCancellingAppt(appt)}
-                      className="tap-target text-red-500 bg-red-50 rounded-xl border border-red-100 flex items-center justify-center min-w-[48px] h-[48px] shrink-0"
-                    >
-                      <X size={20} />
-                    </button>
+
+                      {appt.type === 'Online' && (appt.status === 'Scheduled' || appt.status === 'scheduled') && (
+                        <button 
+                          onClick={() => handleStartCall(appt)}
+                          className="flex-1 min-w-[110px] h-[48px] bg-indigo-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg active:scale-95"
+                        >
+                          <PhoneOutgoing size={16} /> CALL
+                        </button>
+                      )}
+
+                      {(appt.status === 'Scheduled' || appt.status === 'scheduled') && (
+                        <button 
+                          onClick={() => initiateCompletion(appt)}
+                          className="flex-1 min-w-[110px] h-[48px] bg-emerald-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg active:scale-95"
+                        >
+                          <CheckCircle2 size={16} /> COMPLETE
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -424,10 +507,10 @@ export default function AppointmentManager({ profile }: { profile?: any }) {
             <table className="w-full text-left">
               <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100">
                 <tr>
-                  <th className="px-6 py-4">Patient</th>
+                  <th className="px-6 py-4">Patient & WhatsApp</th>
                   <th className="px-6 py-4">Date & Time</th>
                   <th className="px-6 py-4 text-center">Mode</th>
-                  <th className="px-6 py-4 text-center">Status</th>
+                  <th className="px-6 py-4 text-center">Status Toggle</th>
                   <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -439,109 +522,114 @@ export default function AppointmentManager({ profile }: { profile?: any }) {
                     </td>
                   </tr>
                 ) : (
-                  filteredAppointments.map((appt) => (
-                    <tr key={appt.id} className="hover:bg-slate-50/50 transition-colors group">
-                      <td className="px-6 py-4">
-                        <p className="font-bold text-slate-900">{appt.patientName}</p>
-                        <p className="text-[10px] text-slate-400 font-mono">ID: {appt.patientId.substring(0, 8)}</p>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-4">
-                          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-                            <Calendar size={14} className="text-slate-300" />
-                            {format(new Date(appt.date), 'dd MMM')}
+                  filteredAppointments.map((appt) => {
+                    const waLink = getPatientWhatsAppLink(appt);
+                    return (
+                      <tr key={appt.id} className="hover:bg-slate-50/50 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-bold text-slate-900">{appt.patientName}</p>
+                              {appt.reason && (
+                                <p className="text-[11px] text-slate-500 line-clamp-1 italic max-w-xs">{appt.reason}</p>
+                              )}
+                            </div>
+                            {waLink && (
+                              <a
+                                href={waLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-2 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center gap-1 text-xs font-bold transition-all ml-2"
+                                title="Chat on WhatsApp"
+                              >
+                                <MessageCircle size={14} />
+                                <span className="text-[10px]">Chat</span>
+                              </a>
+                            )}
                           </div>
-                          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-                            <Clock size={14} className="text-slate-300" />
-                            {appt.time}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-1.5 text-xs text-slate-600 font-medium">
+                              <Calendar size={14} className="text-slate-300" />
+                              {format(new Date(appt.date), 'dd MMM yyyy')}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-slate-600 font-bold">
+                              <Clock size={14} className="text-slate-300" />
+                              {appt.time}
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex justify-center flex-col items-center gap-1">
-                          {appt.type === 'Online' ? (
-                            <>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex justify-center flex-col items-center gap-1">
+                            {appt.type === 'Online' ? (
                               <span className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full whitespace-nowrap">
                                 <Video size={10} /> VIDEO
                               </span>
-                              {appt.videoLink && (
-                                <div className="flex items-center gap-1 scale-90">
-                                  <a 
-                                    href={appt.videoLink} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className="text-[9px] text-indigo-500 hover:underline font-medium"
-                                  >
-                                    Join Link
-                                  </a>
-                                  <button 
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(appt.videoLink!);
-                                      toast.success('Link copied');
-                                    }}
-                                    className="p-1 text-slate-300 hover:text-indigo-400"
-                                  >
-                                    <Copy size={10} />
-                                  </button>
-                                </div>
-                              )}
-                            </>
-                          ) : (
-                            <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full whitespace-nowrap">
-                              <Home size={10} /> CLINIC
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex justify-center">
-                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                            appt.status === 'Completed' ? 'bg-emerald-50 text-emerald-500' :
-                            appt.status === 'Cancelled' ? 'bg-red-50 text-red-500' : 
-                            appt.status === 'pending' ? 'bg-indigo-50 text-indigo-500 animate-pulse' : 'bg-orange-50 text-orange-500'
-                          }`}>
-                            {appt.status}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-2 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                          {appt.type === 'Online' && appt.status === 'Scheduled' && (
-                            <button 
-                              onClick={() => handleStartCall(appt)}
-                              className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 lg:bg-transparent rounded-lg"
-                              title={t('start_call')}
+                            ) : (
+                              <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full whitespace-nowrap">
+                                <Home size={10} /> CLINIC
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex justify-center">
+                            <select
+                              value={appt.status}
+                              onChange={(e) => handleStatusUpdate(appt.id!, e.target.value as any)}
+                              className={`text-xs font-bold px-2.5 py-1 rounded-lg border outline-none cursor-pointer transition-all ${
+                                appt.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                appt.status === 'Cancelled' ? 'bg-red-50 text-red-700 border-red-200' :
+                                appt.status === 'pending' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-orange-50 text-orange-700 border-orange-200'
+                              }`}
                             >
-                              <PhoneOutgoing size={18} />
-                            </button>
-                          )}
-                          {appt.status === 'Scheduled' && (
+                              <option value="pending">Pending</option>
+                              <option value="Scheduled">Confirmed / Scheduled</option>
+                              <option value="Completed">Completed</option>
+                              <option value="Cancelled">Cancelled</option>
+                            </select>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            {appt.type === 'Online' && (appt.status === 'Scheduled' || appt.status === 'scheduled') && (
+                              <button 
+                                onClick={() => handleStartCall(appt)}
+                                className="p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg"
+                                title={t('start_call')}
+                              >
+                                <PhoneOutgoing size={16} />
+                              </button>
+                            )}
+                            {(appt.status === 'Scheduled' || appt.status === 'scheduled') && (
+                              <button 
+                                onClick={() => initiateCompletion(appt)}
+                                className="p-2 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg"
+                                title="Complete"
+                              >
+                                <CheckCircle2 size={16} />
+                              </button>
+                            )}
                             <button 
-                              onClick={() => initiateCompletion(appt)}
-                              className="p-2 text-slate-400 hover:text-emerald-600 bg-slate-50 lg:bg-transparent rounded-lg"
-                              title="Complete"
+                              onClick={() => handleEdit(appt)}
+                              className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 rounded-lg"
+                              title="Edit Details"
                             >
-                              <CheckCircle2 size={18} />
+                              <Pencil size={16} />
                             </button>
-                          )}
-                          <button 
-                            onClick={() => handleEdit(appt)}
-                            className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 lg:bg-transparent rounded-lg"
-                            title={appt.status === 'pending' ? 'Confirm Request' : 'Edit'}
-                          >
-                            <Pencil size={18} />
-                          </button>
-                          <button 
-                            onClick={() => setCancellingAppt(appt)}
-                            className="p-2 text-slate-400 hover:text-red-600 bg-slate-50 lg:bg-transparent rounded-lg"
-                            title="Cancel Appointment"
-                          >
-                            <X size={18} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                            <button 
+                              onClick={() => setCancellingAppt(appt)}
+                              className="p-2 text-slate-400 hover:text-red-600 bg-slate-50 rounded-lg"
+                              title="Cancel Appointment"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

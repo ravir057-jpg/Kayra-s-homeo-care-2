@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from './lib/db';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { doc, getDoc, getDocFromServer, onSnapshot, query, collection, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, onSnapshot, query, collection, where, getDocs, updateDoc, setDoc } from 'firebase/firestore';
 
 // Components
 import Logo from './components/Logo';
@@ -57,7 +57,6 @@ import PatientProfileSetup from './components/patient/PatientProfileSetup';
 import DoctorManager from './components/doctor/DoctorManager';
 import ComplaintsManager from './components/doctor/ComplaintsManager';
 import AuditLogs from './components/doctor/AuditLogs';
-import SupabaseDashboard from './components/doctor/SupabaseDashboard';
 import LegalPage from './components/LegalPage';
 import DoctorLogin from './components/auth/DoctorLogin';
 import PatientLogin from './components/auth/PatientLogin';
@@ -219,7 +218,8 @@ function AppContent() {
                 const patientSnap = await getDocs(patientQ);
                 
                 if (!patientSnap.empty) {
-                  const pData = patientSnap.docs[0].data();
+                  const pDoc = patientSnap.docs[0];
+                  const pData = pDoc.data();
                   setProfile({
                     uid: currentUser.uid,
                     email: pData.email || null,
@@ -228,6 +228,45 @@ function AppContent() {
                     createdAt: pData.createdAt
                   } as GlobalUserProfile);
                 } else {
+                  // Fallback: Check local storage session to see if we can resolve the patient
+                  const sessionStr = localStorage.getItem('kayra_patient_session');
+                  if (sessionStr) {
+                    try {
+                      const session = JSON.parse(sessionStr);
+                      if (session.patientId) {
+                        const directDocRef = doc(db, 'patients', session.patientId);
+                        const directDocSnap = await getDoc(directDocRef);
+                        if (directDocSnap.exists()) {
+                          const pData = directDocSnap.data();
+                          // Heal the document by registering the current user's UID
+                          await updateDoc(directDocRef, {
+                            uid: currentUser.uid,
+                            lastLoginAt: new Date().toISOString()
+                          });
+                          
+                          // Also keep user profile in sync inside users collection
+                          await setDoc(doc(db, 'users', currentUser.uid), {
+                            uid: currentUser.uid,
+                            name: pData.name,
+                            role: 'patient',
+                            createdAt: new Date().toISOString()
+                          });
+
+                          setProfile({
+                            uid: currentUser.uid,
+                            email: pData.email || null,
+                            name: pData.name,
+                            role: 'patient',
+                            createdAt: pData.createdAt
+                          } as GlobalUserProfile);
+                          setLoading(false);
+                          return;
+                        }
+                      }
+                    } catch (e) {
+                      console.warn("Self-healing profile alignment lapsed:", e);
+                    }
+                  }
                   setProfile(null);
                 }
                 setLoading(false);
@@ -377,12 +416,11 @@ function AppContent() {
                   <Route path="/billing" element={<DoctorRoute profile={profile}><BillingManager profile={profile} /></DoctorRoute>} />
                   <Route path="/doctors" element={<DoctorRoute profile={profile}><DoctorManager profile={profile} /></DoctorRoute>} />
                   <Route path="/ai-tools" element={<DoctorRoute profile={profile}><AITools /></DoctorRoute>} />
-                  <Route path="/video" element={<DoctorRoute profile={profile}><VideoConsultation /></DoctorRoute>} />
+                  <Route path="/video" element={<DoctorRoute profile={profile}><VideoConsultation profile={profile} /></DoctorRoute>} />
                   <Route path="/follow-up" element={<DoctorRoute profile={profile}><FollowUpManager profile={profile} /></DoctorRoute>} />
                   <Route path="/reports" element={<DoctorRoute profile={profile}><ReportsAnalytics /></DoctorRoute>} />
                   <Route path="/complaints" element={<DoctorRoute profile={profile}><ComplaintsManager /></DoctorRoute>} />
                   <Route path="/logs" element={<DoctorRoute profile={profile}><AuditLogs profile={profile} /></DoctorRoute>} />
-                  <Route path="/supabase" element={<DoctorRoute profile={profile}><SupabaseDashboard /></DoctorRoute>} />
                   <Route path="/settings" element={<DoctorRoute profile={profile}><DoctorSettings profile={profile} /></DoctorRoute>} />
                   <Route path="/portal" element={<PatientRoute profile={profile}><PatientPortal /></PatientRoute>} />
                   <Route path="*" element={profile?.role === 'doctor' ? <Navigate to="/dashboard" /> : (profile?.role === 'patient' ? <Navigate to="/portal" /> : <Navigate to="/" />)} />

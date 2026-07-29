@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
+import { auth, db, handleFirestoreError, OperationType, signInAnonymouslyWithFallback } from '../../lib/db';
 import { 
   updateProfile,
   sendEmailVerification
@@ -19,7 +19,11 @@ import {
   MapPin,
   FileText,
   CheckSquare,
-  Square
+  Square,
+  UserPlus,
+  Trash2,
+  Plus,
+  X
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -41,6 +45,30 @@ export default function ClinicRegistration() {
   const [qualification, setQualification] = useState('');
   const [boardRegNumber, setBoardRegNumber] = useState('');
   const [nchRegNumber, setNchRegNumber] = useState('');
+
+  // Additional Doctors under Clinic
+  const [additionalDoctors, setAdditionalDoctors] = useState<Array<{
+    name: string;
+    email: string;
+    phone: string;
+    specialization: string;
+    qualification: string;
+    boardRegNumber: string;
+    nchRegNumber: string;
+    fees: number;
+  }>>([]);
+
+  const [newDocForm, setNewDocForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    specialization: '',
+    qualification: '',
+    boardRegNumber: '',
+    nchRegNumber: '',
+    fees: 500
+  });
+  const [showAddDocForm, setShowAddDocForm] = useState(false);
 
   // Mobile Auth
   const [mobileNumber, setMobileNumber] = useState('');
@@ -114,8 +142,7 @@ export default function ClinicRegistration() {
 
       // Ensure authenticated session is active
       if (!auth.currentUser) {
-        const { signInAnonymously } = await import('firebase/auth');
-        await signInAnonymously(auth);
+        await signInAnonymouslyWithFallback();
       }
 
       toast.success('WhatsApp number verified successfully!');
@@ -206,6 +233,47 @@ export default function ClinicRegistration() {
       };
       await setDoc(doc(db, 'doctors', user.uid), doctorProfile);
       
+      // 4. Register any additional doctors pre-configured under this clinic
+      if (additionalDoctors && additionalDoctors.length > 0) {
+        for (const docInfo of additionalDoctors) {
+          // Unique claimable key for the pre-registered doctor
+          const docId = `pre-doc-${docInfo.email.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+          
+          const addDocProfile = {
+            uid: docId,
+            name: docInfo.name,
+            email: docInfo.email.toLowerCase(),
+            phone: docInfo.phone,
+            mobileNumber: docInfo.phone,
+            role: 'doctor',
+            clinicId: clinicId,
+            clinicName: clinicName,
+            clinicAddress: clinicAddress,
+            specialization: docInfo.specialization,
+            qualification: docInfo.qualification,
+            stateBoardRegistrationNumber: docInfo.boardRegNumber,
+            nchRegistrationNumber: docInfo.nchRegNumber,
+            consultationFee: Number(docInfo.fees) || 500,
+            isOnboarded: true, // Auto-onboard so they don't have to fill onboarding form again
+            isVerified: false,
+            isPreRegistered: true,
+            createdAt: new Date().toISOString()
+          };
+          
+          await setDoc(doc(db, 'users', docId), addDocProfile);
+
+          await setDoc(doc(db, 'doctors', docId), {
+            uid: docId,
+            clinicId: clinicId,
+            name: docInfo.name,
+            qualification: docInfo.qualification,
+            specialization: [docInfo.specialization],
+            isActive: true,
+            isVerified: false
+          });
+        }
+      }
+
       // Optionally update Firebase Profile
       await updateProfile(user, { displayName: doctorName });
 
@@ -362,10 +430,211 @@ export default function ClinicRegistration() {
               </div>
             </div>
 
+            {/* Additional Doctors List & Register Sub-Form */}
+            <div className="space-y-4 pt-6 mt-4 border-t border-slate-100">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <UserPlus className="text-emerald-600" size={20} />
+                  <div>
+                    <h3 className="text-base font-bold text-slate-800">Clinic’s Other Doctors</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Multi-Doctor Practice Setup (Optional)</p>
+                  </div>
+                </div>
+                {!showAddDocForm && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddDocForm(true)}
+                    className="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1 border border-emerald-100"
+                  >
+                    <Plus size={14} /> Add Doctor
+                  </button>
+                )}
+              </div>
+
+              {/* Render existing added doctors list */}
+              {additionalDoctors.length > 0 && (
+                <div className="grid grid-cols-1 gap-3">
+                  {additionalDoctors.map((doc, idx) => (
+                    <div key={idx} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between shadow-sm">
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">Dr. {doc.name}</p>
+                        <p className="text-[10px] text-slate-500 font-medium">
+                          {doc.specialization || 'General Homoeopath'} • {doc.qualification || 'BHMS'}
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                          {doc.email} • {doc.phone}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdditionalDoctors(prev => prev.filter((_, i) => i !== idx));
+                          toast.success('Doctor removed from registration list.');
+                        }}
+                        className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add form */}
+              {showAddDocForm && (
+                <div className="p-5 bg-slate-50 border border-slate-200 rounded-[2rem] space-y-4 relative animate-fadeIn">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddDocForm(false)}
+                    className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 rounded-full"
+                  >
+                    <X size={16} />
+                  </button>
+                  <p className="text-xs font-bold text-slate-700">Enter Doctor Details</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">Doctor Name *</label>
+                      <input
+                        type="text"
+                        placeholder="Dr. Shreyas Patil"
+                        value={newDocForm.name}
+                        onChange={(e) => setNewDocForm(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-emerald-500 outline-none bg-white font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">Email (For Login) *</label>
+                      <input
+                        type="email"
+                        placeholder="dr.shreyas@gmail.com"
+                        value={newDocForm.email}
+                        onChange={(e) => setNewDocForm(prev => ({ ...prev, email: e.target.value }))}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-emerald-500 outline-none bg-white font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">Phone / WhatsApp *</label>
+                      <input
+                        type="tel"
+                        placeholder="Mobile Number"
+                        value={newDocForm.phone}
+                        onChange={(e) => setNewDocForm(prev => ({ ...prev, phone: e.target.value }))}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-emerald-500 outline-none bg-white font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">Specialization</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Paediatric Homeopathy"
+                        value={newDocForm.specialization}
+                        onChange={(e) => setNewDocForm(prev => ({ ...prev, specialization: e.target.value }))}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-emerald-500 outline-none bg-white font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">Qualifications</label>
+                      <input
+                        type="text"
+                        placeholder="BHMS, LCEH"
+                        value={newDocForm.qualification}
+                        onChange={(e) => setNewDocForm(prev => ({ ...prev, qualification: e.target.value }))}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-emerald-500 outline-none bg-white font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">Consultation Fees (₹)</label>
+                      <input
+                        type="number"
+                        placeholder="500"
+                        value={newDocForm.fees}
+                        onChange={(e) => setNewDocForm(prev => ({ ...prev, fees: Number(e.target.value) }))}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-emerald-500 outline-none bg-white font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">Board Reg. No.</label>
+                      <input
+                        type="text"
+                        placeholder="Reg Number"
+                        value={newDocForm.boardRegNumber}
+                        onChange={(e) => setNewDocForm(prev => ({ ...prev, boardRegNumber: e.target.value }))}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-emerald-500 outline-none bg-white font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">NCH Reg. No.</label>
+                      <input
+                        type="text"
+                        placeholder="National Reg Number"
+                        value={newDocForm.nchRegNumber}
+                        onChange={(e) => setNewDocForm(prev => ({ ...prev, nchRegNumber: e.target.value }))}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-emerald-500 outline-none bg-white font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddDocForm(false)}
+                      className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!newDocForm.name || !newDocForm.email || !newDocForm.phone) {
+                          toast.error('Name, Email, and Phone/WhatsApp number are required fields.');
+                          return;
+                        }
+                        if (additionalDoctors.some(d => d.email.toLowerCase() === newDocForm.email.toLowerCase())) {
+                          toast.error('A doctor with this email is already added to the list.');
+                          return;
+                        }
+                        setAdditionalDoctors(prev => [...prev, { ...newDocForm }]);
+                        setNewDocForm({
+                          name: '',
+                          email: '',
+                          phone: '',
+                          specialization: '',
+                          qualification: '',
+                          boardRegNumber: '',
+                          nchRegNumber: '',
+                          fees: 500
+                        });
+                        setShowAddDocForm(false);
+                        toast.success('Doctor details pre-configured for this clinic.');
+                      }}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors shadow-sm"
+                    >
+                      Add to Registration
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <button 
               onClick={() => {
-                if (!clinicName || !doctorName || !mobileNumber) {
-                  // Basic validation
+                if (!clinicName) {
+                  toast.error('Please enter the clinic name.');
+                  return;
+                }
+                if (!doctorName) {
+                  toast.error('Please enter the primary doctor name.');
+                  return;
                 }
                 setStep('mobile');
               }}
@@ -555,11 +824,22 @@ export default function ClinicRegistration() {
               </div>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-indigo-500 shadow-sm border border-slate-100">
+                  <UserPlus size={18} />
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Staff Doctors Loaded</p>
+                  <p className="text-[11px] font-bold text-slate-800">
+                    Primary Practitioner + {additionalDoctors.length} staff doctor{additionalDoctors.length === 1 ? '' : 's'} registered
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-indigo-500 shadow-sm border border-slate-100">
                   <Clock size={18} />
                 </div>
                 <div>
                   <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Next Step</p>
-                  <p className="text-[11px] font-bold text-slate-800">Complete AI Profile Setup</p>
+                  <p className="text-[11px] font-bold text-slate-800">Login and Complete AI Profile Setup</p>
                 </div>
               </div>
             </div>

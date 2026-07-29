@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
-import { signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut } from 'firebase/auth';
+import { auth, db, handleFirestoreError, OperationType, signInAnonymouslyWithFallback } from '../../lib/db';
+import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
@@ -36,16 +36,22 @@ export default function PatientLogin() {
         const patientData = patientDoc.data();
         
         // 2. Sign in anonymously to get a UID for Firestore rules
-        const userCredential = await signInAnonymously(auth);
+        const userCredential = await signInAnonymouslyWithFallback();
         const uid = userCredential.user.uid;
 
-        // 3. Update the record with this UID if it doesn't have one (Claiming)
-        if (!patientData.uid) {
-          await updateDoc(doc(db, 'patients', patientDoc.id), {
-            uid: uid,
-            lastLoginAt: new Date().toISOString()
-          });
-        }
+        // 3. Keep the UID in sync for direct DB queries based on Auth UID and security rules
+        await updateDoc(doc(db, 'patients', patientDoc.id), {
+          uid: uid,
+          lastLoginAt: new Date().toISOString()
+        });
+
+        // Also create/update a user profile record in users so App.tsx can subscribe to it directly
+        await setDoc(doc(db, 'users', uid), {
+          uid: uid,
+          name: patientData.name,
+          role: 'patient',
+          createdAt: patientData.createdAt || new Date().toISOString()
+        });
         
         // 4. Store session info for the UI
         localStorage.setItem('kayra_patient_session', JSON.stringify({

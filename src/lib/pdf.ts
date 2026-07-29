@@ -61,10 +61,14 @@ export function generatePrescriptionPDF(doctor: UserProfile | null, patient: Pat
   }
 
   // Footer
-  doc.setFontSize(7);
-  doc.setTextColor(150);
-  const regNo = doctor?.stateBoardRegistrationNumber || doctor?.nchRegistrationNumber || "Regd.";
-  doc.text(`Regd. No: ${regNo} | Mobile: +91 99318 64619`, 10, 200);
+  doc.setFontSize(6.5);
+  doc.setTextColor(140);
+  const regNo = doctor?.stateBoardRegistrationNumber || doctor?.nchRegistrationNumber || "Regd. Homeopathic Physician";
+  const clinicBrand = doctor?.clinicName || "KAYRA'S HOMEO CARE";
+  doc.text(`Regd. No: ${regNo} | Contact: +91 99318 64619`, 10, 198);
+  doc.setFontSize(5.5);
+  doc.setTextColor(160);
+  doc.text(`Issued via Telemedicine Practice Guidelines. ${clinicBrand} Digital Health Network.`, 10, 203);
 
   return doc;
 }

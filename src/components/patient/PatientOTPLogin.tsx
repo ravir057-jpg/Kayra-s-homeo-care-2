@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Smartphone, ShieldCheck, ArrowRight, ArrowLeft, RefreshCcw, CheckSquare, Square } from 'lucide-react';
 import { toast } from 'sonner';
+import { auth, db, signInAnonymouslyWithFallback } from '../../lib/db';
+import { collection, query, where, getDocs, updateDoc, setDoc, doc } from 'firebase/firestore';
 import Logo from '../Logo';
 
 export default function PatientOTPLogin() {
@@ -69,18 +71,62 @@ export default function PatientOTPLogin() {
         throw new Error(data.error || 'Invalid verification response');
       }
 
-      setLoading(false);
       toast.success('Identity validated successfully!');
-      
-      // Save local session representing successful verification for patient
-      localStorage.setItem('kayra_patient_session', JSON.stringify({
-        patientId: 'KHC-TMP-' + Math.floor(100000 + Math.random() * 900000),
-        name: 'Patient Verified',
-        mobileNumber: phone,
-        loginType: 'phone-otp'
-      }));
-      
-      navigate('/portal/setup');
+
+      // Sign in anonymously to get a secure UID for rules
+      let activeUid = '';
+      try {
+        const userCredential = await signInAnonymouslyWithFallback();
+        activeUid = userCredential.user.uid;
+      } catch (authErr) {
+        console.warn("Auth setup during OTP verification failed:", authErr);
+      }
+
+      // Query if patient already registered with this mobileNumber
+      const pQ = query(collection(db, 'patients'), where('mobileNumber', '==', phone));
+      const pSnap = await getDocs(pQ);
+
+      if (!pSnap.empty) {
+        const patientDoc = pSnap.docs[0];
+        const pData = patientDoc.data();
+
+        if (activeUid) {
+          // Keep active UID in sync inside patients collection
+          await updateDoc(doc(db, 'patients', patientDoc.id), {
+            uid: activeUid,
+            lastLoginAt: new Date().toISOString()
+          });
+
+          // Also set direct users claim so App.tsx watcher recognizes them
+          await setDoc(doc(db, 'users', activeUid), {
+            uid: activeUid,
+            name: pData.name,
+            role: 'patient',
+            createdAt: pData.createdAt || new Date().toISOString()
+          });
+        }
+
+        localStorage.setItem('kayra_patient_session', JSON.stringify({
+          patientId: patientDoc.id,
+          name: pData.name,
+          mobileNumber: phone,
+          loginType: 'phone-otp'
+        }));
+
+        toast.success(`Welcome back, ${pData.name}`);
+        setLoading(false);
+        navigate('/portal');
+      } else {
+        // Safe defaults for first-time profile creation/setup
+        localStorage.setItem('kayra_patient_session', JSON.stringify({
+          patientId: 'KHC-TMP-' + Math.floor(100000 + Math.random() * 900000),
+          name: 'Patient Verified',
+          mobileNumber: phone,
+          loginType: 'phone-otp'
+        }));
+        setLoading(false);
+        navigate('/portal/setup');
+      }
     } catch (err: any) {
       setLoading(false);
       toast.error(err.message || 'Verification failed. Try the standard bypass code 1234 or request a new code.');

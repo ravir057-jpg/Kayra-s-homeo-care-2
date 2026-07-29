@@ -12,8 +12,7 @@ import {
   MessageSquare,
   Award,
   Video,
-  MessageCircle,
-  ShieldHalf
+  MessageCircle
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -28,7 +27,7 @@ import {
   Bar
 } from 'recharts';
 import { collection, query, getDocs, limit, orderBy, where } from 'firebase/firestore';
-import { db, auth, OperationType, handleFirestoreError } from '../../lib/db';
+import { db, auth } from '../../lib/db';
 import { format } from 'date-fns';
 import { Feedback, UserProfile } from '../../types';
 import { getDashboardStats, getRevenueChartData } from '../../services/analyticsService';
@@ -161,7 +160,7 @@ export default function DoctorDashboard({ profile }: { profile?: any }) {
     };
 
     fetchDashboardData();
-  }, []);
+  }, [profile]);
 
   if (loading) return <div className="h-96 flex items-center justify-center">Syncing Practice Dashboard...</div>;
 

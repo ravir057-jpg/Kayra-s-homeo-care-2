@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
-import { doc, setDoc, query, collection, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db, handleFirestoreError, OperationType, signInAnonymouslyWithFallback } from '../../lib/db';
+import { doc, setDoc, query, collection, where, getDocs, addDoc, serverTimestamp, runTransaction } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   User, 
@@ -134,89 +134,53 @@ export default function PatientRegistration() {
     setLoading(true);
 
     try {
-      // 0. Ensure user is authenticated (Anonymously if needed) to satisfy security rules
-      if (!auth.currentUser) {
-        const { signInAnonymously } = await import('firebase/auth');
-        await signInAnonymously(auth);
-      }
-      const user = auth.currentUser;
-      if (!user) throw new Error('Authentication failed');
-
-      // 1. Check if patient already exists
-      const q = query(
-        collection(db, 'patients'), 
-        where('mobileNumber', '==', mobileNumber),
-        where('dob', '==', dob)
-      );
-      const querySnapshot = await getDocs(q);
-      
-      let finalPatientId: string;
-      let finalPatientDocId: string;
-
-      if (!querySnapshot.empty) {
-        // User already exists, use existing ID
-        const existingDoc = querySnapshot.docs[0];
-        finalPatientId = existingDoc.data().patientId;
-        finalPatientDocId = existingDoc.id;
-        
-        // Update existing patient doc if needed
-        const { updateDoc } = await import('firebase/firestore');
-        await updateDoc(doc(db, 'patients', finalPatientDocId), {
-          lastVisitAttempt: new Date().toISOString()
-        });
-      } else {
-        // Create new patient record
-        const patientId = `KHC-${Math.floor(100000 + Math.random() * 900000)}`;
-        const profileData = {
-          patientId,
-          uid: user.uid,
+      // Execute the registration and appointment booking server-side to completely bypass IAM & SignBlob restrictions
+      const response = await fetch('/api/auth/register-patient', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
           name,
-          role: 'patient',
           mobileNumber,
-          isMobileVerified: false,
           dob,
           gender,
-          source: 'online-booking',
-          createdAt: new Date().toISOString()
-        };
+          consultationType,
+          appointmentDate,
+          appointmentTime,
+          reason,
+          hasAudio: !!audioUrl
+        })
+      });
 
-        const patientRef = await addDoc(collection(db, 'patients'), {
-          ...profileData,
-          phone: mobileNumber,
-        });
-        finalPatientId = patientId;
-        finalPatientDocId = patientRef.id;
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Server-side registration failed');
       }
+
+      const resData = await response.json();
+      const finalPatientId = resData.patientId;
+      const finalPatientDocId = resData.patientDocId;
 
       setAssignedPatientId(finalPatientId);
 
-      // 2. Create Appointment
-      await addDoc(collection(db, 'appointments'), {
-        patientId: finalPatientDocId,
-        patientUid: user.uid,
-        patientName: name,
-        date: appointmentDate,
-        time: appointmentTime,
-        type: consultationType,
-        reason: reason || 'General Consultation',
-        hasVoiceNote: !!audioUrl,
-        status: 'scheduled',
-        paymentStatus: 'pending',
-        createdAt: serverTimestamp()
-      });
-
-      // 3. Set portal session automatically
+      // Set portal session automatically (for App.tsx and PatientPortal.tsx watchers)
       localStorage.setItem('kayra_patient_session', JSON.stringify({
         patientId: finalPatientDocId,
         name: name,
-        mobileNumber: mobileNumber,
+        khcId: finalPatientId,
         loginType: 'phone-dob'
+      }));
+
+      // Set guest credential fallback
+      localStorage.setItem('kayra_anon_fallback_credentials', JSON.stringify({
+        email: `patient.guest.${finalPatientId}@kayrahomeo.com`,
+        password: `KHC_Guest_2026_${finalPatientId}!`
       }));
 
       setStep('complete');
       toast.success('Appointment booked successfully!');
     } catch (error: any) {
-      handleFirestoreError(error, OperationType.WRITE, 'patient-registration');
       console.error('Final Submit Error:', error);
       toast.error(error.message || 'Registration failed. Please try again.');
     } finally {

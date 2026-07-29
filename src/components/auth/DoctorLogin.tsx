@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '../../lib/db';
 import { signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { Stethoscope, ArrowLeft, ShieldCheck, KeyRound, ArrowRight } from 'lucide-react';
@@ -75,18 +75,63 @@ export default function DoctorLogin() {
     try {
       if (isRegistering) {
         const result = await createUserWithEmailAndPassword(auth, email, password);
-        await setDoc(doc(db, 'users', result.user.uid), {
+        
+        // Check if there is a pre-registered doctor profile stub
+        const cleanEmail = email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const stubUserRef = doc(db, 'users', `pre-doc-${cleanEmail}`);
+        const stubUserSnap = await getDoc(stubUserRef);
+
+        let finalProfileData: any = {
           uid: result.user.uid,
-          email: email,
+          email: email.toLowerCase(),
           role: 'doctor',
           name: name || email.split('@')[0],
           specialization,
-          experience: Number(experience),
+          experience: Number(experience) || 0,
           qualification,
           stateBoardRegistrationNumber: boardRegNumber,
           nchRegistrationNumber: nchRegNumber,
-        });
-        toast.success('Practitioner account created');
+          isOnboarded: true,
+          createdAt: new Date().toISOString()
+        };
+
+        if (stubUserSnap.exists()) {
+          const stubData = stubUserSnap.data();
+          finalProfileData = {
+            ...finalProfileData,
+            ...stubData,
+            uid: result.user.uid,
+            isPreRegistered: false, // Claimed
+            isOnboarded: true
+          };
+          toast.success(`Welcome to Kayra’s Homeo Care! Your profile was securely claimed and linked under clinic "${stubData.clinicName || 'your clinic'}" successfully!`);
+        } else {
+          toast.success('Practitioner account created');
+        }
+
+        await setDoc(doc(db, 'users', result.user.uid), finalProfileData);
+
+        // Also create/update doc in doctors collection
+        const doctorDocData = {
+          uid: result.user.uid,
+          clinicId: finalProfileData.clinicId || '',
+          name: finalProfileData.name,
+          qualification: finalProfileData.qualification || '',
+          specialization: [finalProfileData.specialization || 'Homeopathy'],
+          isActive: true,
+          isVerified: false
+        };
+        await setDoc(doc(db, 'doctors', result.user.uid), doctorDocData);
+
+        // Remove the temporary pre-registration stubs
+        if (stubUserSnap.exists()) {
+          try {
+            await deleteDoc(stubUserRef);
+            await deleteDoc(doc(db, 'doctors', `pre-doc-${cleanEmail}`));
+          } catch (delError) {
+            console.warn('Error deleting temporary doctor pre-registration stubs:', delError);
+          }
+        }
       } else {
         const result = await signInWithEmailAndPassword(auth, email, password);
         const docRef = doc(db, 'users', result.user.uid);

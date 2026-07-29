@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Brain, BookOpen, Lightbulb, MessageSquare, FileScan, Upload, X, FileText, ImageIcon, Copy, FilePlus, Sparkles, FileBarChart } from 'lucide-react';
 import { getRepertoryInsights, getAdvancedRepertoryAnalysis, analyzeCase, analyzeMedicalReport, searchMateriaMedica, synthesizeSymptomAndLabReport } from '../../lib/gemini';
 import ReactMarkdown from 'react-markdown';
@@ -19,6 +19,20 @@ export default function AITools() {
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ data: string; mimeType: string; name: string; preview?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const preLab = localStorage.getItem('ai_sandbox_presets_injected_lab');
+    const preSymp = localStorage.getItem('ai_sandbox_presets_injected_symptoms');
+    if (preLab && preSymp) {
+      setGlassInput(preLab);
+      setSymptomsInput(preSymp);
+      setInput(preSymp);
+      setActiveTab('synthesis');
+      localStorage.removeItem('ai_sandbox_presets_injected_lab');
+      localStorage.removeItem('ai_sandbox_presets_injected_symptoms');
+      toast.success("Injected clinical research dataset successfully loaded!");
+    }
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

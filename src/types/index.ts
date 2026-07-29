@@ -98,6 +98,7 @@ export interface Appointment {
   hasVoiceNote?: boolean;
   videoLink?: string;
   fee?: number;
+  phone?: string;
   commissionAmount?: number;
   doctorNetShare?: number;
   createdAt?: string;
@@ -255,6 +256,15 @@ export interface Report {
   clinicalGuidance?: string;
   rubricsSuggested?: string[];
   fullAnalysis?: string;
+  ambossVerified?: string;
+  glassInsights?: string;
+  homeopathicMatches?: string;
+  synthesisRubrics?: {
+    rubricName: string;
+    repertoryChapter: string;
+    sourceAbnormalFinding: string;
+    remediesAssociated: { remedy: string; grade: number }[];
+  }[];
   createdAt: string;
   analyzedAt?: string;
 }

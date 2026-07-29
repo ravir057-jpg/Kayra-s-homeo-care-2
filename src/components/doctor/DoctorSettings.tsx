@@ -23,7 +23,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/db';
 import { toast } from 'sonner';
 import AuditLogs from './AuditLogs';
-import SupabaseDashboard from './SupabaseDashboard';
+import SandboxQA from './SandboxQA';
 
 interface DoctorSettingsProps {
   profile: UserProfile | null;
@@ -49,6 +49,11 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
     photoURL: profile?.photoURL || '',
     razorpayKeyId: profile?.razorpayKeyId || '',
     razorpayKeySecret: profile?.razorpayKeySecret || '',
+    whatsappProvider: (profile as any)?.whatsappProvider || 'simulated',
+    whatsappApiKey: (profile as any)?.whatsappApiKey || '',
+    whatsappInstanceId: (profile as any)?.whatsappInstanceId || '',
+    whatsappPhoneNumberId: (profile as any)?.whatsappPhoneNumberId || '',
+    whatsappSenderMobile: (profile as any)?.whatsappSenderMobile || '',
   });
   const [paymentStatus, setPaymentStatus] = useState<'configured' | 'missing'>('missing');
 
@@ -71,6 +76,11 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
         photoURL: profile.photoURL || '',
         razorpayKeyId: profile.razorpayKeyId || '',
         razorpayKeySecret: profile.razorpayKeySecret || '',
+        whatsappProvider: (profile as any).whatsappProvider || 'simulated',
+        whatsappApiKey: (profile as any).whatsappApiKey || '',
+        whatsappInstanceId: (profile as any).whatsappInstanceId || '',
+        whatsappPhoneNumberId: (profile as any).whatsappPhoneNumberId || '',
+        whatsappSenderMobile: (profile as any).whatsappSenderMobile || '',
       });
     }
   }, [profile]);
@@ -123,6 +133,11 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
         photoURL: formData.photoURL,
         razorpayKeyId: formData.razorpayKeyId,
         razorpayKeySecret: formData.razorpayKeySecret,
+        whatsappProvider: formData.whatsappProvider,
+        whatsappApiKey: formData.whatsappApiKey,
+        whatsappInstanceId: formData.whatsappInstanceId,
+        whatsappPhoneNumberId: formData.whatsappPhoneNumberId,
+        whatsappSenderMobile: formData.whatsappSenderMobile,
       });
       toast.success('Settings saved successfully!');
     } catch (error) {
@@ -176,6 +191,13 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
             onClick={() => setActiveSection('billing')}
           />
           <SettingsNavLink 
+            id="whatsapp" 
+            label="WhatsApp OTP" 
+            icon={<Smartphone size={18} />} 
+            active={activeSection === 'whatsapp'} 
+            onClick={() => setActiveSection('whatsapp')}
+          />
+          <SettingsNavLink 
             id="security" 
             label="Privacy" 
             icon={<Lock size={18} />} 
@@ -204,11 +226,11 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
             onClick={() => setActiveSection('logs')}
           />
           <SettingsNavLink 
-            id="supabase" 
-            label="Supabase Engine" 
-            icon={<Database size={18} />} 
-            active={activeSection === 'supabase'} 
-            onClick={() => setActiveSection('supabase')}
+            id="sandbox" 
+            label="QA Sandbox Hub" 
+            icon={<ShieldCheck size={18} className="text-indigo-600" />} 
+            active={activeSection === 'sandbox'} 
+            onClick={() => setActiveSection('sandbox')}
           />
         </aside>
 
@@ -578,9 +600,209 @@ export default function DoctorSettings({ profile }: DoctorSettingsProps) {
             </motion.div>
           )}
 
-          {activeSection === 'supabase' && (
+          {activeSection === 'whatsapp' && (
             <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-              <SupabaseDashboard />
+              <div className="space-y-2">
+                <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                  <Smartphone className="text-emerald-500" size={20} />
+                  WhatsApp OTP Gateway
+                </h4>
+                <p className="text-sm text-slate-500">
+                  Select your messaging provider and configure the secure API token to enable real-time WhatsApp OTP verification during patient booking.
+                </p>
+              </div>
+
+              <div className="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] space-y-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block">Choose Provider Mode</label>
+                  <div className="grid grid-cols-2 xs:grid-cols-4 gap-3">
+                    {[
+                      { id: 'simulated', label: 'Simulated Sandbox' },
+                      { id: 'ultramsg', label: 'Ultramsg API' },
+                      { id: 'meta', label: 'Meta Cloud API' },
+                      { id: 'twilio', label: 'Twilio Hook' }
+                    ].map(p => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, whatsappProvider: p.id })}
+                        className={`py-3 px-2 rounded-xl text-center text-xs font-black uppercase transition-all border ${
+                          formData.whatsappProvider === p.id 
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-xl shadow-slate-200' 
+                            : 'bg-white text-slate-400 hover:text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {formData.whatsappProvider === 'simulated' && (
+                  <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-2xl flex items-start gap-3">
+                    <ShieldCheck className="text-emerald-600 mt-0.5" size={20} />
+                    <p className="text-xs font-semibold leading-relaxed">
+                      <strong>Sandbox Active:</strong> Safe simulated mode delivers verification OTPs directly inside in-app toast alerts for fluent clinical trial testing without setting up third-party billable accounts. No setup required!
+                    </p>
+                  </div>
+                )}
+
+                {formData.whatsappProvider === 'ultramsg' && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-slate-100/50 border border-slate-200 text-slate-600 rounded-2xl text-xs space-y-1">
+                      <p className="font-bold text-slate-800">Ultramsg Configuration Guidelines:</p>
+                      <p>1. Sign in or register at <strong>ultramsg.com</strong> & link your WhatsApp device.</p>
+                      <p>2. Paste your unique <strong>Instance ID</strong> and <strong>Token</strong> below.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Ultramsg Instance ID</label>
+                        <input
+                          type="text"
+                          value={formData.whatsappInstanceId}
+                          onChange={e => setFormData({ ...formData, whatsappInstanceId: e.target.value })}
+                          className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-slate-900 font-mono text-xs text-slate-700"
+                          placeholder="instance12040"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Ultramsg Developer Token</label>
+                        <input
+                          type="password"
+                          value={formData.whatsappApiKey}
+                          onChange={e => setFormData({ ...formData, whatsappApiKey: e.target.value })}
+                          className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-slate-900 font-mono text-xs text-slate-700"
+                          placeholder="••••••••••••••••"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {formData.whatsappProvider === 'meta' && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-slate-100/50 border border-slate-200 text-slate-600 rounded-2xl text-xs space-y-1">
+                      <p className="font-bold text-slate-800">Meta WhatsApp Cloud API Guidelines:</p>
+                      <p>Configure Facebook Developer dashboard, request a Token with <code>whatsapp_business_messaging</code> authorization scope, and provide the credentials below.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Meta Phone Number ID</label>
+                        <input
+                          type="text"
+                          value={formData.whatsappPhoneNumberId}
+                          onChange={e => setFormData({ ...formData, whatsappPhoneNumberId: e.target.value })}
+                          className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-slate-900 font-mono text-xs text-slate-700"
+                          placeholder="1092873401"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">System User Access Token</label>
+                        <input
+                          type="password"
+                          value={formData.whatsappApiKey}
+                          onChange={e => setFormData({ ...formData, whatsappApiKey: e.target.value })}
+                          className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-slate-900 font-mono text-xs text-slate-700"
+                          placeholder="EAACW7..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {formData.whatsappProvider === 'twilio' && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-slate-100/50 border border-slate-200 text-slate-600 rounded-2xl text-xs space-y-1">
+                      <p className="font-bold text-slate-800">Twilio Webhook Guidelines:</p>
+                      <p>Enter your <strong>Twilio Auth Token</strong> in the Auth field below. Be sure to define the sender number starting with whatsapp prefix.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Twilio Whatsapp Sender</label>
+                        <input
+                          type="text"
+                          value={formData.whatsappSenderMobile}
+                          onChange={e => setFormData({ ...formData, whatsappSenderMobile: e.target.value })}
+                          className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-slate-900 font-mono text-xs text-slate-700"
+                          placeholder="whatsapp:+14155238886"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Twilio Auth Token</label>
+                        <input
+                          type="password"
+                          value={formData.whatsappApiKey}
+                          onChange={e => setFormData({ ...formData, whatsappApiKey: e.target.value })}
+                          className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-slate-900 font-mono text-xs text-slate-700"
+                          placeholder="••••••••••••••••"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Secure Testing Panel */}
+              <div className="p-6 bg-white border border-slate-200 rounded-[2.5rem] space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>
+                  <h5 className="font-bold text-slate-800 text-sm">Interactive Live Test Gateway</h5>
+                </div>
+                <p className="text-xs text-slate-400 font-medium">
+                  Trigger an instantaneous test transmission to yourself to verify integration flow on the fly.
+                </p>
+
+                <div className="flex gap-4">
+                  <input
+                    type="tel"
+                    id="whatsapp-test-number"
+                    maxLength={10}
+                    placeholder="Enter 10-Digit Mobile"
+                    className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-slate-900 font-mono font-bold text-sm text-slate-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const input = document.getElementById('whatsapp-test-number') as HTMLInputElement;
+                      const number = input?.value?.replace(/\D/g, '') || '';
+                      if (number.length < 10) {
+                        toast.error('A clean 10-digit mobile number is required.');
+                        return;
+                      }
+                      
+                      const toastId = toast.loading('Initiating secure test-handshake...');
+                      try {
+                        const response = await fetch('/api/otp/test-send', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            phone: number,
+                            provider: formData.whatsappProvider,
+                            token: formData.whatsappApiKey,
+                            instanceId: formData.whatsappInstanceId,
+                            phoneNumberId: formData.whatsappPhoneNumberId,
+                            senderMobile: formData.whatsappSenderMobile
+                          })
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'Test failure');
+                        toast.success(data.message || 'Verification success!', { id: toastId, duration: 8000 });
+                      } catch (err: any) {
+                        toast.error(err.message || 'Handoff error', { id: toastId });
+                      }
+                    }}
+                    className="px-6 py-3 bg-slate-900 text-white font-black text-[11px] uppercase tracking-wider rounded-xl hover:bg-slate-800 active:scale-95 transition-all flex items-center gap-2"
+                  >
+                    Send Test OTP
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeSection === 'sandbox' && (
+            <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
+              <SandboxQA profile={profile} />
             </motion.div>
           )}
         </div>
